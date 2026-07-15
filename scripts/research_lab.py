@@ -1,4 +1,4 @@
-"""Research lab script for EMA crossover forward-return analysis."""
+"""Research lab script for EMA crossover forward-return analysis and backtesting."""
 
 from __future__ import annotations
 
@@ -9,6 +9,15 @@ from pathlib import Path
 from typing import Any
 
 import polars as pl
+
+from apex_lab.research.backtest.backtester import (
+    DEFAULT_SUMMARY_OUTPUT as DEFAULT_BACKTEST_SUMMARY_OUTPUT,
+    DEFAULT_TRADES_OUTPUT,
+    ExitMode,
+    compute_metrics,
+    run_backtest,
+    write_backtest_reports,
+)
 
 DEFAULT_DATA_PATH = Path("data/raw/30minute/NIFTY BANK.parquet")
 DEFAULT_CSV_OUTPUT = Path("reports/lab/csv/ema_cross_returns.csv")
@@ -39,6 +48,38 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_JSON_OUTPUT,
         help="Path to the JSON summary report.",
+    )
+    # Event-driven backtest arguments
+    parser.add_argument(
+        "--mode",
+        choices=["forward_return", "event"],
+        default="forward_return",
+        help="Analysis mode: forward_return (default) or event (backtest).",
+    )
+    parser.add_argument(
+        "--exit",
+        dest="exit_mode",
+        choices=["opposite_crossover", "fixed_bars"],
+        default="opposite_crossover",
+        help="Exit mode for event backtest (default: opposite_crossover).",
+    )
+    parser.add_argument(
+        "--bars",
+        type=int,
+        default=10,
+        help="Number of bars to hold when --exit fixed_bars is used (default: 10).",
+    )
+    parser.add_argument(
+        "--trades-output",
+        type=Path,
+        default=DEFAULT_TRADES_OUTPUT,
+        help="Path for the backtest trades CSV.",
+    )
+    parser.add_argument(
+        "--backtest-summary-output",
+        type=Path,
+        default=DEFAULT_BACKTEST_SUMMARY_OUTPUT,
+        help="Path for the backtest summary JSON.",
     )
     return parser.parse_args()
 
@@ -181,22 +222,65 @@ def run_research_lab(
     return bullish_returns, summary
 
 
+def run_event_backtest(
+    data_path: Path,
+    exit_mode: ExitMode = "opposite_crossover",
+    fixed_bars: int = 10,
+    trades_output: Path = DEFAULT_TRADES_OUTPUT,
+    summary_output: Path = DEFAULT_BACKTEST_SUMMARY_OUTPUT,
+) -> tuple[pl.DataFrame, dict[str, Any]]:
+    """Run the event-driven EMA crossover backtest and write reports to disk.
+
+    Args:
+        data_path: Path to the OHLCV parquet file.
+        exit_mode: How to exit trades (opposite_crossover or fixed_bars).
+        fixed_bars: Bars to hold when exit_mode is fixed_bars.
+        trades_output: Destination path for trades CSV.
+        summary_output: Destination path for summary JSON.
+
+    Returns:
+        A tuple of (trades DataFrame, metrics dictionary).
+    """
+    df = load_ohlcv(data_path)
+    enriched = compute_ema_signals(df)
+    trades = run_backtest(enriched, exit_mode=exit_mode, fixed_bars=fixed_bars)
+    metrics = compute_metrics(trades)
+    write_backtest_reports(trades, metrics, trades_output, summary_output)
+    return trades, metrics
+
+
 def main() -> None:
     """Execute the research lab CLI."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     args = parse_args()
-    bullish_returns, summary = run_research_lab(args.data, args.csv_output, args.json_output)
-    logger.info(
-        "Wrote %d bullish crossover rows to %s",
-        bullish_returns.height,
-        args.csv_output,
-    )
-    logger.info(
-        "Summary written to %s (%d bullish, %d bearish crossovers)",
-        args.json_output,
-        summary["bullish_crossovers"],
-        summary["bearish_crossovers"],
-    )
+
+    if args.mode == "event":
+        trades, metrics = run_event_backtest(
+            data_path=args.data,
+            exit_mode=args.exit_mode,
+            fixed_bars=args.bars,
+            trades_output=args.trades_output,
+            summary_output=args.backtest_summary_output,
+        )
+        logger.info(
+            "Backtest complete: %d trades, win_rate=%.1f%%, expectancy=%.4f",
+            metrics["number_of_trades"],
+            (metrics["win_rate"] or 0.0) * 100.0,
+            metrics["expectancy"] or 0.0,
+        )
+    else:
+        bullish_returns, summary = run_research_lab(args.data, args.csv_output, args.json_output)
+        logger.info(
+            "Wrote %d bullish crossover rows to %s",
+            bullish_returns.height,
+            args.csv_output,
+        )
+        logger.info(
+            "Summary written to %s (%d bullish, %d bearish crossovers)",
+            args.json_output,
+            summary["bullish_crossovers"],
+            summary["bearish_crossovers"],
+        )
 
 
 if __name__ == "__main__":
