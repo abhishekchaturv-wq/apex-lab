@@ -14,6 +14,7 @@ Computed features
 from __future__ import annotations
 
 import logging
+import math
 
 import polars as pl
 
@@ -67,7 +68,7 @@ class VolatilityFeatures(FeatureGroup):
         # ------------------------------------------------------------------ #
         # Rolling standard deviation of log returns                            #
         # ------------------------------------------------------------------ #
-        log_return = (pl.col("close") / (pl.col("close").shift(1) + epsilon)).log(base=2.718281828)
+        log_return = (pl.col("close") / (pl.col("close").shift(1) + epsilon)).log(base=math.e)
         rolling_std = (log_return.rolling_std(window_size=_STD_WINDOW) * 100.0).alias("rolling_std")
 
         # ------------------------------------------------------------------ #
