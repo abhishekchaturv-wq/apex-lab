@@ -109,7 +109,7 @@ def train_baseline_model(
         y_test_raw = working_test[target_column].to_numpy()
         y_test = _apply_class_mapping(y_test_raw, class_mapping)
     else:
-        # Legacy behaviour: random stratified split.
+        # Legacy behavior: random stratified split.
         stratify = y if _can_stratify(y) else None
         x_train, x_test, y_train, y_test = train_test_split(
             x,
