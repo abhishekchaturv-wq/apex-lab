@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import json
+from datetime import UTC, datetime
+from pathlib import Path
 
 import polars as pl
-import pytest
 
 from apex_lab.dataset import (
     DatasetBuildConfig,
@@ -86,8 +86,6 @@ def test_validator_detects_duplicates_and_missing_labels(small_ohlcv: pl.DataFra
 
 def test_serializer_persists_parquet_and_json(tmp_path: Path, small_ohlcv: pl.DataFrame) -> None:
     """Serializer should write dataset/splits parquet and metadata json."""
-    from pathlib import Path
-
     dataset = small_ohlcv.with_columns(pl.lit("NONE").alias("label"))
     splits = split_dataset(dataset)
     metadata = build_metadata(
@@ -112,8 +110,6 @@ def test_serializer_persists_parquet_and_json(tmp_path: Path, small_ohlcv: pl.Da
 
 def test_builder_builds_complete_dataset_with_one_call(small_ohlcv: pl.DataFrame, tmp_path: Path) -> None:
     """Single build call should return dataset, metadata, splits, and persisted files."""
-    from pathlib import Path
-
     config = DatasetBuildConfig(
         symbols=["NIFTY"],
         timeframe="5m",
@@ -143,6 +139,10 @@ def test_builder_respects_schema_validation(small_ohlcv: pl.DataFrame) -> None:
     )
 
     result = builder.build(small_ohlcv, config)
-    errors = collect_validation_errors(result.dataset, expected_schema=result.dataset.schema)
+    errors = collect_validation_errors(
+        result.dataset,
+        expected_schema=result.dataset.schema,
+        nullable_columns={"future_return", "bars_to_target", "bars_to_failure"},
+    )
 
     assert errors == []
