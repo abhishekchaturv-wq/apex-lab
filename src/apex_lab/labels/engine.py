@@ -138,6 +138,7 @@ class LabelEngine:
             .then(pl.lit(0.0))
             .when(pl.col("bars_to_failure").is_null())
             .then(pl.lit(1.0))
+            # Confidence increases with wider separation between target hit and failure hit.
             .otherwise(
                 ((pl.col("bars_to_failure") - pl.col("bars_to_target")).cast(pl.Float64) / lookahead).clip(0.0, 1.0)
             )

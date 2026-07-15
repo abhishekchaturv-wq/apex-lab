@@ -119,5 +119,5 @@ def test_evaluator_statistics() -> None:
     assert stats.total_labels == 2
     assert stats.class_balance[LabelType.BOTTOM.value] == 1
     assert stats.class_balance[LabelType.TOP.value] == 1
-    # average_move uses absolute returns: (|0.04| + |-0.03|) / 2 = 0.035
+    # average_move uses absolute returns: (0.04 + 0.03) / 2 = 0.035
     assert stats.average_move == pytest.approx(0.035, rel=1e-6)
