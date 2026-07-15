@@ -6,10 +6,6 @@ across the entire application. No print() statements should be used.
 
 import logging
 import logging.config
-from typing import Optional
-
-from apex_lab.config.settings import settings
-
 
 # Standard logging format
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -31,9 +27,17 @@ def get_logger(name: str) -> logging.Logger:
         >>> logger.info("Processing data...")
     """
     logger = logging.getLogger(name)
-    
-    # Set level from settings
-    log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
+
+    # Read log level from settings when available; fall back to INFO so that
+    # importing this module never requires Kite credentials to be present
+    # (e.g. during offline test runs).
+    try:
+        from apex_lab.config.settings import settings  # noqa: PLC0415
+
+        log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    except Exception:
+        log_level = logging.INFO
+
     logger.setLevel(log_level)
     
     # Return if handlers already configured
