@@ -31,6 +31,25 @@ Training writes:
 - `feature_importance.csv`
 - `prediction_probabilities.csv`
 
+## Research sprint baseline analysis
+
+Use the reproducible research pipeline to run end-to-end baseline predictive analysis in one command:
+
+```bash
+python -m apex_lab.models.experiment --input-dir data/raw/30m --output-dir reports
+```
+
+Expected report files:
+
+- `reports/metrics.json`
+- `reports/feature_importance.csv`
+- `reports/threshold_analysis.csv`
+- `reports/confusion_matrix.csv`
+- `reports/calibration.csv`
+- `reports/probability_distribution.csv`
+- `reports/feature_correlation.csv`
+- `reports/experiment.json`
+
 ## Usage
 
 Use `train_baseline_model` with a generated dataset that has numeric feature columns and one binary target column.
