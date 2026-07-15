@@ -168,6 +168,18 @@ def _build_model(*, model_name: str, random_state: int) -> object:
 
 def _select_feature_columns(dataset: pl.DataFrame, *, target_column: str) -> list[str]:
     """Select numeric feature columns excluding target."""
+    excluded = {
+        "timestamp",
+        "symbol",
+        "label",
+        "confidence",
+        "future_return",
+        "bars_to_target",
+        "bars_to_failure",
+        "target_top",
+        "target_bottom",
+        target_column,
+    }
     numeric_dtypes = {
         pl.Int8,
         pl.Int16,
@@ -184,7 +196,7 @@ def _select_feature_columns(dataset: pl.DataFrame, *, target_column: str) -> lis
     return [
         column
         for column, dtype in dataset.schema.items()
-        if column != target_column and dtype in numeric_dtypes
+        if column not in excluded and dtype in numeric_dtypes
     ]
 
 

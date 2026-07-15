@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 
-import apex_lab.models.trainer as trainer_module
 import numpy as np
 import polars as pl
 import pytest
 from sklearn.datasets import make_classification
 
+import apex_lab.models.trainer as trainer_module
 from apex_lab.models import (
     evaluate_binary_classifier,
     load_model,

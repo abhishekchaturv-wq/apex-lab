@@ -119,10 +119,10 @@ def _write_symbol_data(path: Path, *, offset: float, points: int) -> pl.DataFram
         {
             "timestamp": pl.datetime_range(
                 start=pl.datetime(2024, 1, 1, 9, 15),
+                end=pl.datetime(2024, 1, 26, 15, 30),
                 interval="30m",
                 eager=True,
-                periods=points,
-            ),
+            )[:points],
             "open": open_,
             "high": high,
             "low": low,
