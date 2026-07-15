@@ -482,7 +482,7 @@ def _probability_characteristics(frame: pl.DataFrame) -> dict[str, Any]:
 def _git_sha() -> str | None:
     """Return current git SHA when available."""
     try:
-        output = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True, timeout=5).strip()
+        output = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True, timeout=10).strip()
         return output or None
     except (subprocess.SubprocessError, FileNotFoundError):
         return None
