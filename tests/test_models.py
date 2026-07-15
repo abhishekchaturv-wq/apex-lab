@@ -9,6 +9,7 @@ import polars as pl
 import pytest
 from sklearn.datasets import make_classification
 
+import apex_lab.models.trainer as trainer_module
 from apex_lab.models import (
     evaluate_binary_classifier,
     load_model,
@@ -116,3 +117,27 @@ def test_model_serialization_roundtrip(binary_dataset: pl.DataFrame, tmp_path) -
     loaded_probs = predict_probabilities(loaded_model, features, feature_names=result.feature_names)
 
     assert np.allclose(original_probs, loaded_probs)
+
+
+def test_train_baseline_model_skips_random_split_when_test_df_is_supplied(
+    binary_dataset: pl.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit test frames should bypass sklearn's random train/test split."""
+
+    def fail_if_called(*args, **kwargs) -> None:
+        raise AssertionError("train_test_split should not be called when test_df is supplied")
+
+    monkeypatch.setattr(trainer_module, "train_test_split", fail_if_called)
+
+    train_df = binary_dataset.head(300)
+    test_df = binary_dataset.tail(200)
+
+    result = train_baseline_model(
+        train_df,
+        target_column="target",
+        model_name="logistic_regression",
+        test_df=test_df,
+    )
+
+    assert len(result.prediction_probabilities) == len(test_df)

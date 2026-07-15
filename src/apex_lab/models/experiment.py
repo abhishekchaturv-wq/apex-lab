@@ -14,7 +14,8 @@ import numpy as np
 import polars as pl
 from sklearn.metrics import precision_score, recall_score
 
-from apex_lab.dataset import DatasetBuildConfig, DatasetBuilder, build_metadata
+from apex_lab.dataset import DatasetBuildConfig, DatasetBuilder, DatasetSplits, build_metadata
+from apex_lab.labels.rules import LabelingRules
 from apex_lab.models.trainer import MODEL_REGISTRY, train_baseline_model
 
 REQUIRED_RAW_COLUMNS = {"timestamp", "open", "high", "low", "close", "volume"}
@@ -23,6 +24,7 @@ TARGET_DEFINITIONS = {
     "bottom": ("BOTTOM", "target_bottom"),
 }
 DEFAULT_THRESHOLDS = (0.50, 0.60, 0.70, 0.80, 0.90)
+DEFAULT_PURGE_GAP_BARS = LabelingRules().lookahead_window
 
 
 @dataclass(frozen=True)
@@ -50,8 +52,12 @@ def run_baseline_predictive_analysis(
     raw_by_symbol = _load_historical_data(input_dir)
     git_sha = _git_sha()
     builder = DatasetBuilder()
+    purge_gap_bars = DEFAULT_PURGE_GAP_BARS
 
     per_symbol_datasets: list[pl.DataFrame] = []
+    per_symbol_train_frames: list[pl.DataFrame] = []
+    per_symbol_validation_frames: list[pl.DataFrame] = []
+    per_symbol_test_frames: list[pl.DataFrame] = []
     symbols = sorted(raw_by_symbol)
     for symbol in symbols:
         build_config = DatasetBuildConfig(
@@ -62,9 +68,23 @@ def run_baseline_predictive_analysis(
             git_sha=git_sha,
         )
         result = builder.build(raw_by_symbol[symbol], build_config)
-        per_symbol_datasets.append(result.dataset.with_columns(pl.lit(symbol).alias("symbol")))
+        dataset_with_symbol = result.dataset.with_columns(pl.lit(symbol).alias("symbol"))
+        purged_splits = _purge_for_holdout(result.splits, purge_gap_bars=purge_gap_bars)
+        _validate_chronological_splits(purged_splits)
+
+        per_symbol_datasets.append(dataset_with_symbol)
+        per_symbol_train_frames.append(purged_splits.train.with_columns(pl.lit(symbol).alias("symbol")))
+        per_symbol_validation_frames.append(purged_splits.validation.with_columns(pl.lit(symbol).alias("symbol")))
+        per_symbol_test_frames.append(purged_splits.test.with_columns(pl.lit(symbol).alias("symbol")))
 
     combined_dataset = pl.concat(per_symbol_datasets, how="vertical")
+    train_dataset = _append_target_columns(_sort_modeling_frame(pl.concat(per_symbol_train_frames, how="vertical")))
+    validation_dataset = _append_target_columns(
+        _sort_modeling_frame(pl.concat(per_symbol_validation_frames, how="vertical"))
+    )
+    test_dataset = _append_target_columns(_sort_modeling_frame(pl.concat(per_symbol_test_frames, how="vertical")))
+    _validate_modeling_frames(train_dataset, validation_dataset, test_dataset)
+
     metadata = build_metadata(
         combined_dataset,
         feature_version=feature_version,
@@ -74,12 +94,7 @@ def run_baseline_predictive_analysis(
         git_sha=git_sha,
     )
 
-    modeling_dataset = combined_dataset.with_columns(
-        [
-            (pl.col("label") == target_label).cast(pl.Int8).alias(target_column)
-            for target_label, target_column in TARGET_DEFINITIONS.values()
-        ]
-    )
+    modeling_dataset = _append_target_columns(combined_dataset)
     feature_columns = _select_model_feature_columns(modeling_dataset)
 
     runs: list[dict[str, Any]] = []
@@ -91,13 +106,12 @@ def run_baseline_predictive_analysis(
 
     for model_name in sorted(MODEL_REGISTRY):
         for target_name, (_, target_column) in TARGET_DEFINITIONS.items():
-            train_frame = modeling_dataset.select(feature_columns + [target_column])
             training_result = train_baseline_model(
-                train_frame,
+                train_dataset,
                 target_column=target_column,
                 model_name=model_name,
-                test_size=test_size,
                 random_state=random_state,
+                test_df=test_dataset,
             )
 
             metrics = training_result.metrics
@@ -279,6 +293,68 @@ def _select_model_feature_columns(dataset: pl.DataFrame) -> list[str]:
         for column, dtype in dataset.schema.items()
         if column not in excluded and dtype in numeric_dtypes
     ]
+
+
+def _append_target_columns(dataset: pl.DataFrame) -> pl.DataFrame:
+    """Add binary target columns derived from the multi-class label column."""
+    return dataset.with_columns(
+        [
+            (pl.col("label") == target_label).cast(pl.Int8).alias(target_column)
+            for target_label, target_column in TARGET_DEFINITIONS.values()
+        ]
+    )
+
+
+def _sort_modeling_frame(dataset: pl.DataFrame) -> pl.DataFrame:
+    """Sort modeling frames deterministically for chronological evaluation."""
+    sort_columns = ["timestamp"]
+    if "symbol" in dataset.columns:
+        sort_columns.append("symbol")
+    return dataset.sort(sort_columns)
+
+
+def _purge_for_holdout(splits: DatasetSplits, *, purge_gap_bars: int) -> DatasetSplits:
+    """Trim the tail of train/validation splits to prevent horizon overlap leakage."""
+    if purge_gap_bars < 0:
+        raise ValueError("purge_gap_bars must be >= 0")
+    if purge_gap_bars == 0:
+        return splits
+    if len(splits.train) <= purge_gap_bars:
+        raise ValueError("Training split must be larger than purge_gap_bars")
+    if len(splits.validation) <= purge_gap_bars:
+        raise ValueError("Validation split must be larger than purge_gap_bars")
+
+    return DatasetSplits(
+        train=splits.train.slice(0, len(splits.train) - purge_gap_bars),
+        validation=splits.validation.slice(0, len(splits.validation) - purge_gap_bars),
+        test=splits.test,
+    )
+
+
+def _validate_chronological_splits(splits: DatasetSplits) -> None:
+    """Assert that chronological split boundaries remain ordered."""
+    if len(splits.train) == 0 or len(splits.validation) == 0 or len(splits.test) == 0:
+        raise ValueError("Chronological splits must all be non-empty")
+
+    train_last = splits.train["timestamp"][-1]
+    validation_first = splits.validation["timestamp"][0]
+    validation_last = splits.validation["timestamp"][-1]
+    test_first = splits.test["timestamp"][0]
+
+    if train_last >= validation_first:
+        raise ValueError("Train split must end before validation split begins")
+    if validation_last >= test_first:
+        raise ValueError("Validation split must end before test split begins")
+
+
+def _validate_modeling_frames(
+    train_dataset: pl.DataFrame,
+    validation_dataset: pl.DataFrame,
+    test_dataset: pl.DataFrame,
+) -> None:
+    """Validate modeling-frame schemas after chronological assembly."""
+    if train_dataset.schema != validation_dataset.schema or train_dataset.schema != test_dataset.schema:
+        raise ValueError("Train/validation/test modeling frames must share the same schema")
 
 
 def _build_threshold_rows(

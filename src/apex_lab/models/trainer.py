@@ -67,8 +67,21 @@ def train_baseline_model(
     test_size: float = 0.2,
     random_state: int = 42,
     output_dir: Path | None = None,
+    test_df: pl.DataFrame | None = None,
 ) -> TrainingResult:
-    """Train one baseline model and return metrics plus output artifacts."""
+    """Train one baseline model and return metrics plus output artifacts.
+
+    Args:
+        dataset: Training data (or full dataset when *test_df* is ``None``).
+        target_column: Binary target column name.
+        model_name: Key in :data:`MODEL_REGISTRY`.
+        test_size: Fraction of data for testing when *test_df* is ``None``.
+        random_state: Seed for model and (legacy) random split.
+        output_dir: Optional directory to persist artifacts.
+        test_df: Pre-split test DataFrame.  When provided, *dataset* is used
+            only for training and ``train_test_split`` is **not** called,
+            preserving chronological integrity.
+    """
     if target_column not in dataset.columns:
         raise ValueError(f"Target column '{target_column}' not found in dataset")
 
@@ -76,24 +89,35 @@ def train_baseline_model(
     if not feature_names:
         raise ValueError("No numeric feature columns available for training")
 
-    working_df = dataset.select(feature_names + [target_column]).drop_nulls()
-    if len(working_df) < 20:
+    working_train = dataset.select(feature_names + [target_column]).drop_nulls()
+    if len(working_train) < 20:
         raise ValueError("Dataset has too few non-null rows for training")
 
-    x = working_df.select(feature_names).to_numpy()
-    y_raw = working_df[target_column].to_numpy()
+    x = working_train.select(feature_names).to_numpy()
+    y_raw = working_train[target_column].to_numpy()
     y, class_mapping = _encode_binary_labels(y_raw)
 
     estimator = _build_model(model_name=model_name, random_state=random_state)
 
-    stratify = y if _can_stratify(y) else None
-    x_train, x_test, y_train, y_test = train_test_split(
-        x,
-        y,
-        test_size=test_size,
-        random_state=random_state,
-        stratify=stratify,
-    )
+    if test_df is not None:
+        # Chronological split supplied by caller – skip random shuffle entirely.
+        if target_column not in test_df.columns:
+            raise ValueError(f"Target column '{target_column}' not found in test_df")
+        working_test = test_df.select(feature_names + [target_column]).drop_nulls()
+        x_train, y_train = x, y
+        x_test = working_test.select(feature_names).to_numpy()
+        y_test_raw = working_test[target_column].to_numpy()
+        y_test = _apply_class_mapping(y_test_raw, class_mapping)
+    else:
+        # Legacy behavior: random stratified split.
+        stratify = y if _can_stratify(y) else None
+        x_train, x_test, y_train, y_test = train_test_split(
+            x,
+            y,
+            test_size=test_size,
+            random_state=random_state,
+            stratify=stratify,
+        )
 
     estimator.fit(x_train, y_train)
 
@@ -144,6 +168,18 @@ def _build_model(*, model_name: str, random_state: int) -> object:
 
 def _select_feature_columns(dataset: pl.DataFrame, *, target_column: str) -> list[str]:
     """Select numeric feature columns excluding target."""
+    excluded = {
+        "timestamp",
+        "symbol",
+        "label",
+        "confidence",
+        "future_return",
+        "bars_to_target",
+        "bars_to_failure",
+        "target_top",
+        "target_bottom",
+        target_column,
+    }
     numeric_dtypes = {
         pl.Int8,
         pl.Int16,
@@ -160,7 +196,7 @@ def _select_feature_columns(dataset: pl.DataFrame, *, target_column: str) -> lis
     return [
         column
         for column, dtype in dataset.schema.items()
-        if column != target_column and dtype in numeric_dtypes
+        if column not in excluded and dtype in numeric_dtypes
     ]
 
 
@@ -175,6 +211,12 @@ def _encode_binary_labels(y_raw: np.ndarray) -> tuple[np.ndarray, dict[str, int]
     mapping = {label: idx for idx, label in enumerate(unique_values)}
     encoded = np.asarray([mapping[str(value)] for value in values], dtype=int)
     return encoded, mapping
+
+
+def _apply_class_mapping(y_raw: np.ndarray, mapping: dict[str, int]) -> np.ndarray:
+    """Encode labels using an existing class mapping (no uniqueness check)."""
+    values = [value.item() if isinstance(value, np.generic) else value for value in y_raw]
+    return np.asarray([mapping[str(value)] for value in values], dtype=int)
 
 
 def _can_stratify(y: np.ndarray) -> bool:
