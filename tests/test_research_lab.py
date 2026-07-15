@@ -6,6 +6,7 @@ import datetime
 import importlib.util
 import json
 from pathlib import Path
+from types import ModuleType
 
 import polars as pl
 import pytest
@@ -13,7 +14,7 @@ import pytest
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "research_lab.py"
 
 
-def _load_script_module():
+def _load_script_module() -> ModuleType:
     spec = importlib.util.spec_from_file_location("research_lab_script", SCRIPT_PATH)
     assert spec is not None
     assert spec.loader is not None
@@ -27,7 +28,9 @@ def _make_ohlcv(closes: list[float]) -> pl.DataFrame:
     base_ts = datetime.datetime(2024, 1, 2, 9, 15, 0)
     return pl.DataFrame(
         {
-            "timestamp": [base_ts + datetime.timedelta(minutes=30 * index) for index in range(len(closes))],
+            "timestamp": [
+                base_ts + datetime.timedelta(minutes=30 * index) for index in range(len(closes))
+            ],
             "open": [close - 0.5 for close in closes],
             "high": [close + 1.0 for close in closes],
             "low": [close - 1.0 for close in closes],

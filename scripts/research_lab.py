@@ -80,9 +80,9 @@ def compute_ema_signals(df: pl.DataFrame) -> pl.DataFrame:
     )
 
     forward_return_columns = [
-        ((pl.col("close").shift(-horizon) / pl.col("close")) - 1.0).mul(100.0).alias(
-            f"forward_return_{horizon}"
-        )
+        ((pl.col("close").shift(-horizon) / pl.col("close")) - 1.0)
+        .mul(100.0)
+        .alias(f"forward_return_{horizon}")
         for horizon in FORWARD_RETURN_HORIZONS
     ]
     return enriched.with_columns(forward_return_columns)
