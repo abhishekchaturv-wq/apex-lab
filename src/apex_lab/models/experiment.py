@@ -147,11 +147,13 @@ def run_baseline_predictive_analysis(
     reports_dir = output_dir
     reports_dir.mkdir(parents=True, exist_ok=True)
 
+    training_timestamp = datetime.now(tz=UTC).isoformat()
+
     metrics_payload = {
         "dataset_id": metadata.dataset_id,
         "symbols": symbols,
         "timeframe": timeframe,
-        "training_timestamp": datetime.now(tz=UTC).isoformat(),
+        "training_timestamp": training_timestamp,
         "runs": runs,
     }
     (reports_dir / "metrics.json").write_text(json.dumps(metrics_payload, indent=2), encoding="utf-8")
@@ -171,7 +173,7 @@ def run_baseline_predictive_analysis(
         },
         "feature_version": feature_version,
         "label_version": label_version,
-        "training_timestamp": datetime.now(tz=UTC).isoformat(),
+        "training_timestamp": training_timestamp,
         "metrics": {run["model"] + "_" + run["target"]: run["metrics"] for run in runs},
     }
     (reports_dir / "experiment.json").write_text(json.dumps(experiment_payload, indent=2), encoding="utf-8")
