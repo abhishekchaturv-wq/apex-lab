@@ -44,13 +44,13 @@ class LabelEngine:
         atr = pl.col(self.rules.atr_column)
         scaled_atr = atr * self.rules.atr_multiplier
 
-        reward_distance = scaled_atr * self.rules.reward_multiplier
-        risk_distance = scaled_atr * self.rules.risk_multiplier
+        reward_threshold = scaled_atr * self.rules.reward_multiplier
+        risk_threshold = scaled_atr * self.rules.risk_multiplier
 
-        bottom_target_level = pl.col("low") + reward_distance
-        bottom_failure_level = pl.col("low") - risk_distance
-        top_target_level = pl.col("high") - reward_distance
-        top_failure_level = pl.col("high") + risk_distance
+        bottom_target_level = pl.col("low") + reward_threshold
+        bottom_failure_level = pl.col("low") - risk_threshold
+        top_target_level = pl.col("high") - reward_threshold
+        top_failure_level = pl.col("high") + risk_threshold
 
         lookahead = self.rules.lookahead_window
 
