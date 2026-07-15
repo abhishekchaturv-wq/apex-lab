@@ -85,9 +85,9 @@ class _LazySettings:
             instance = object.__getattribute__(self, "_instance")
             return repr(instance)
         except AttributeError:
-            return "<Settings: not yet initialised>"
+            return "<Settings: not yet initialized>"
 
 
 # Lazy global settings proxy — Settings() is only instantiated when a
 # settings attribute is first accessed (e.g. settings.kite_api_key).
-settings: Any = _LazySettings()
+settings: _LazySettings = _LazySettings()
