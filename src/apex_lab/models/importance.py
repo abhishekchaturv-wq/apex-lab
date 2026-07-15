@@ -23,9 +23,9 @@ def compute_feature_importance(
 
     model_importance = np.full(len(feature_names), np.nan, dtype=float)
     if hasattr(estimator, "feature_importances_"):
-        model_importance = np.asarray(getattr(estimator, "feature_importances_"), dtype=float)
+        model_importance = np.asarray(estimator.feature_importances_, dtype=float)
     elif hasattr(estimator, "coef_"):
-        coef = np.asarray(getattr(estimator, "coef_"), dtype=float)
+        coef = np.asarray(estimator.coef_, dtype=float)
         model_importance = np.abs(coef).mean(axis=0)
 
     permutation = permutation_importance(
@@ -59,7 +59,7 @@ def save_feature_importance_csv(feature_importance: pl.DataFrame, path: Path) ->
 def _unwrap_estimator(model: object) -> object:
     """Extract inner estimator when model is a sklearn Pipeline."""
     if hasattr(model, "named_steps"):
-        steps = getattr(model, "named_steps")
+        steps = model.named_steps
         if "model" in steps:
             return steps["model"]
         last_name = next(reversed(steps))
