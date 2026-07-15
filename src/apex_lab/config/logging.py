@@ -33,9 +33,10 @@ def get_logger(name: str) -> logging.Logger:
     # (e.g. during offline test runs).
     try:
         from apex_lab.config.settings import settings  # noqa: PLC0415
+        from pydantic import ValidationError  # noqa: PLC0415
 
         log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
-    except Exception:
+    except ValidationError:
         log_level = logging.INFO
 
     logger.setLevel(log_level)
