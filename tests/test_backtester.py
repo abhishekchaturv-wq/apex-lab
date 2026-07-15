@@ -216,7 +216,9 @@ class TestComputeMetrics:
         )
         metrics = compute_metrics(trades)
         assert metrics["win_rate"] == pytest.approx(0.0)
-        assert metrics["profit_factor"] == pytest.approx(0.0)  # 0 gross wins / positive losses
+        # profit_factor = 0 gross wins / |gross losses| = 0.0.
+        # None is only returned when there are no losing trades at all.
+        assert metrics["profit_factor"] == pytest.approx(0.0)
 
     def test_profit_factor_calculation(self) -> None:
         """profit_factor should equal gross wins / |gross losses|."""

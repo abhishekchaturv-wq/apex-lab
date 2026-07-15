@@ -190,6 +190,8 @@ def compute_metrics(trades: pl.DataFrame) -> dict[str, Any]:
 
     gross_wins = float(wins.sum()) if wins.len() > 0 else 0.0
     gross_losses = abs(float(losses.sum())) if losses.len() > 0 else 0.0
+    # profit_factor is undefined (None) only when there are no losing trades at all.
+    # When there are no winning trades, profit_factor is 0.0 (zero gross profit / positive loss).
     profit_factor: float | None = (
         gross_wins / gross_losses if gross_losses > 0 else None
     )
