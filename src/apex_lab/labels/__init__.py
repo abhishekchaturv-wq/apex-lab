@@ -3,7 +3,7 @@
 from apex_lab.labels.engine import LabelEngine
 from apex_lab.labels.evaluator import LabelStats, evaluate_labels
 from apex_lab.labels.rules import LabelingRules
-from apex_lab.labels.targets import LabelType, TARGET_COLUMNS
+from apex_lab.labels.targets import TARGET_COLUMNS, LabelType
 
 __all__ = [
     "LabelEngine",

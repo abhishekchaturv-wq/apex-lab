@@ -5,7 +5,7 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from apex_lab.labels import LabelEngine, LabelType, LabelingRules, evaluate_labels
+from apex_lab.labels import LabelEngine, LabelingRules, LabelType, evaluate_labels
 
 
 @pytest.fixture()

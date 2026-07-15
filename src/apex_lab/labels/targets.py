@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class LabelType(str, Enum):
+class LabelType(StrEnum):
     """Supported reversal label classes."""
 
     TOP = "TOP"
