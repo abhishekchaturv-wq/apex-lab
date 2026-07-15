@@ -291,14 +291,16 @@ def _build_threshold_rows(
     """Compute threshold-level precision/recall/signal statistics."""
     y_true = probabilities["y_true"].to_numpy()
     y_prob = probabilities["probability"].to_numpy()
+    threshold_array = np.asarray(thresholds, dtype=float)
+    prediction_matrix = y_prob[:, None] >= threshold_array[None, :]
     rows: list[dict[str, Any]] = []
-    for threshold in thresholds:
-        y_pred = (y_prob >= threshold).astype(int)
+    for idx, threshold in enumerate(threshold_array):
+        y_pred = prediction_matrix[:, idx].astype(int)
         rows.append(
             {
                 "model": model_name,
                 "target": target_name,
-                "threshold": threshold,
+                "threshold": float(threshold),
                 "precision": float(precision_score(y_true, y_pred, zero_division=0)),
                 "recall": float(recall_score(y_true, y_pred, zero_division=0)),
                 "number_of_signals": int(y_pred.sum()),
@@ -331,7 +333,7 @@ def _build_calibration_rows(
     mean_pred = calibration["curve"]["mean_predicted_probability"]
     frac_pos = calibration["curve"]["fraction_of_positives"]
     rows: list[dict[str, Any]] = []
-    for idx, (mean_probability, fraction_positive) in enumerate(zip(mean_pred, frac_pos, strict=False)):
+    for idx, (mean_probability, fraction_positive) in enumerate(zip(mean_pred, frac_pos, strict=True)):
         rows.append(
             {
                 "model": model_name,
@@ -390,19 +392,30 @@ def _aggregate_feature_importance(frames: list[pl.DataFrame]) -> pl.DataFrame:
 
 def _build_feature_correlation_table(dataset: pl.DataFrame, feature_columns: list[str]) -> pl.DataFrame:
     """Build pairwise feature correlation table and removal recommendations."""
+    if len(feature_columns) < 2:
+        return pl.DataFrame(
+            schema={
+                "feature_left": pl.String,
+                "feature_right": pl.String,
+                "correlation": pl.Float64,
+                "abs_correlation": pl.Float64,
+                "candidate_for_removal": pl.Boolean,
+            }
+        )
+
+    feature_matrix = dataset.select(feature_columns).to_numpy()
+    stds = np.std(feature_matrix, axis=0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        correlation_matrix = np.corrcoef(feature_matrix, rowvar=False)
+    correlation_matrix = np.nan_to_num(correlation_matrix, nan=0.0)
+    zero_variance = stds == 0.0
+    correlation_matrix[zero_variance, :] = 0.0
+    correlation_matrix[:, zero_variance] = 0.0
+
     rows: list[dict[str, Any]] = []
     for idx, left_feature in enumerate(feature_columns):
-        left_series = dataset[left_feature].to_numpy()
-        left_std = float(np.std(left_series))
-        for right_feature in feature_columns[idx + 1 :]:
-            right_series = dataset[right_feature].to_numpy()
-            right_std = float(np.std(right_series))
-            if left_std == 0.0 or right_std == 0.0:
-                correlation = 0.0
-            else:
-                correlation = float(np.corrcoef(left_series, right_series)[0, 1])
-                if np.isnan(correlation):
-                    correlation = 0.0
+        for right_idx, right_feature in enumerate(feature_columns[idx + 1 :], start=idx + 1):
+            correlation = float(correlation_matrix[idx, right_idx])
             rows.append(
                 {
                     "feature_left": left_feature,
