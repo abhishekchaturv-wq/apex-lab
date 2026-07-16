@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from pydantic import AliasChoices, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -49,7 +49,7 @@ class Settings(BaseSettings):
         default=Path("~/kite-test/apex-data-lake"),
         validation_alias=AliasChoices("apex_data_dir", "data_dir"),
     )
-    cache_dir: Path = Path("~/kite-test/apex-data-lake/cache")
+    cache_dir: Path | None = None
 
     # Logging
     log_level: str = "INFO"
@@ -60,9 +60,18 @@ class Settings(BaseSettings):
 
     @field_validator("data_dir", "cache_dir", mode="before")
     @classmethod
-    def expand_user(cls, v: Any) -> Path:
+    def expand_user(cls, v: Any) -> Path | None:
         """Expand ``~`` in directory paths."""
+        if v is None:
+            return None
         return Path(v).expanduser()
+
+    @model_validator(mode="after")
+    def _set_cache_default(self) -> Settings:
+        """Derive ``cache_dir`` from ``data_dir`` when not explicitly set."""
+        if self.cache_dir is None:
+            self.cache_dir = self.data_dir / "cache"
+        return self
 
     def __init__(self, **data: Any) -> None:
         """Initialize settings and create required directories."""
