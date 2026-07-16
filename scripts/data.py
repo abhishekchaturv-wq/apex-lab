@@ -8,24 +8,10 @@ import shutil
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
-if str(SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(SRC_ROOT))
-
-from apex_lab.data import (  # noqa: E402
-    _resolve_data_dir,
-    download_symbol,
-    refresh_instruments,
-    update_symbol,
-)
-from apex_lab.data.downloader import VALID_INTERVALS  # noqa: E402
-from apex_lab.data.storage import (  # noqa: E402
-    get_instruments_path,
-    get_metadata_path,
-    get_raw_path,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     download_parser.add_argument(
         "--interval",
         required=True,
-        choices=sorted(VALID_INTERVALS),
+        choices=_valid_intervals(),
         help="Candle interval to download.",
     )
     download_parser.add_argument(
@@ -96,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     update_parser.add_argument(
         "--interval",
         required=True,
-        choices=sorted(VALID_INTERVALS),
+        choices=_valid_intervals(),
         help="Candle interval to update.",
     )
 
@@ -115,14 +101,96 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return build_parser().parse_args(argv)
 
 
+def _ensure_src_root_on_path() -> None:
+    """Add the repository src directory to sys.path when running as a script."""
+    if str(SRC_ROOT) not in sys.path:
+        sys.path.insert(0, str(SRC_ROOT))
+
+
+def _valid_intervals() -> list[str]:
+    """Return supported download intervals from the existing data engine."""
+    _ensure_src_root_on_path()
+
+    from apex_lab.data.downloader import VALID_INTERVALS  # noqa: PLC0415
+
+    return sorted(VALID_INTERVALS)
+
+
+def _resolve_data_dir() -> Path:
+    """Resolve the active data directory using the existing data API."""
+    _ensure_src_root_on_path()
+
+    from apex_lab.data import _resolve_data_dir as resolve_data_dir  # noqa: PLC0415
+
+    return resolve_data_dir()
+
+
+def download_symbol(symbol: str, interval: str, start_date: str, end_date: str) -> Any:
+    """Dispatch to the existing download_symbol API."""
+    _ensure_src_root_on_path()
+
+    from apex_lab.data import download_symbol as data_download_symbol  # noqa: PLC0415
+
+    return data_download_symbol(symbol, interval, start_date, end_date)
+
+
+def update_symbol(symbol: str, interval: str) -> Any:
+    """Dispatch to the existing update_symbol API."""
+    _ensure_src_root_on_path()
+
+    from apex_lab.data import update_symbol as data_update_symbol  # noqa: PLC0415
+
+    return data_update_symbol(symbol, interval)
+
+
+def refresh_instruments() -> Any:
+    """Dispatch to the existing refresh_instruments API."""
+    _ensure_src_root_on_path()
+
+    from apex_lab.data import refresh_instruments as data_refresh_instruments  # noqa: PLC0415
+
+    return data_refresh_instruments()
+
+
+def get_raw_path(data_dir: Path, interval: str, symbol: str) -> Path:
+    """Return the existing raw-data output path for a symbol."""
+    _ensure_src_root_on_path()
+
+    from apex_lab.data.storage import get_raw_path as storage_get_raw_path  # noqa: PLC0415
+
+    return storage_get_raw_path(data_dir, interval, symbol)
+
+
+def get_metadata_path(data_dir: Path, interval: str, symbol: str) -> Path:
+    """Return the existing metadata output path for a symbol."""
+    _ensure_src_root_on_path()
+
+    from apex_lab.data.storage import (
+        get_metadata_path as storage_get_metadata_path,  # noqa: PLC0415
+    )
+
+    return storage_get_metadata_path(data_dir, interval, symbol)
+
+
+def get_instruments_path(data_dir: Path) -> Path:
+    """Return the existing instruments output path."""
+    _ensure_src_root_on_path()
+
+    from apex_lab.data.storage import (
+        get_instruments_path as storage_get_instruments_path,  # noqa: PLC0415
+    )
+
+    return storage_get_instruments_path(data_dir)
+
+
 def _configure_logging(debug: bool) -> None:
     """Configure concise CLI logging."""
-    logging.basicConfig(
-        level=logging.DEBUG if debug else logging.INFO,
-        format="%(message)s",
-        stream=sys.stdout,
-        force=True,
-    )
+    logger.handlers.clear()
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG if debug else logging.INFO)
+    logger.propagate = False
 
 
 def _clear_download_artifacts(data_dir: Path, symbol: str, interval: str) -> None:
