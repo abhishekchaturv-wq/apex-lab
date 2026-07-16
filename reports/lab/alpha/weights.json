@@ -1,0 +1,170 @@
+{
+  "normalization": {
+    "method": "sum_to_100_with_last_row_adjustment",
+    "description": "Raw weights are scaled by (raw_weight / total_raw) * 100, rounded to 6 decimals, and final-row difference is applied so the sum is exactly 100.",
+    "weight_sum": 100.0
+  },
+  "weights": [
+    {
+      "feature": "adx_bucket",
+      "bucket": "35+ (Very Strong)",
+      "category": "momentum",
+      "weight": 4.880728,
+      "source_score": 0.499273
+    },
+    {
+      "feature": "atr_percentile",
+      "bucket": "60-80 (High)",
+      "category": "volatility",
+      "weight": 1.059438,
+      "source_score": 0.108375
+    },
+    {
+      "feature": "atr_state",
+      "bucket": "Neutral",
+      "category": "volatility",
+      "weight": 4.880728,
+      "source_score": 0.499273
+    },
+    {
+      "feature": "bb_width_pct",
+      "bucket": "40-60 (Average)",
+      "category": "volatility",
+      "weight": 1.555338,
+      "source_score": 0.159103
+    },
+    {
+      "feature": "dist_ema200",
+      "bucket": "-2% to 0%",
+      "category": "trend",
+      "weight": 4.880728,
+      "source_score": 0.499273
+    },
+    {
+      "feature": "dist_ema50",
+      "bucket": "0% to 1%",
+      "category": "trend",
+      "weight": 4.995875,
+      "source_score": 0.511052
+    },
+    {
+      "feature": "ema200_side",
+      "bucket": "Below EMA200",
+      "category": "trend",
+      "weight": 4.880728,
+      "source_score": 0.499273
+    },
+    {
+      "feature": "ema200_slope",
+      "bucket": "Falling (<-0.05%)",
+      "category": "trend",
+      "weight": 4.880728,
+      "source_score": 0.499273
+    },
+    {
+      "feature": "ema50_slope",
+      "bucket": "Flat (-0.1% to 0.1%)",
+      "category": "trend",
+      "weight": 4.880728,
+      "source_score": 0.499273
+    },
+    {
+      "feature": "gap_pct_bucket",
+      "bucket": "Flat (-0.3% to 0.3%)",
+      "category": "opening_range",
+      "weight": 4.423187,
+      "source_score": 0.452469
+    },
+    {
+      "feature": "higher_high",
+      "bucket": "Higher High",
+      "category": "market_structure",
+      "weight": 4.462241,
+      "source_score": 0.456464
+    },
+    {
+      "feature": "higher_low",
+      "bucket": "Higher Low",
+      "category": "market_structure",
+      "weight": 4.880728,
+      "source_score": 0.499273
+    },
+    {
+      "feature": "inside_or",
+      "bucket": "Outside Opening Range",
+      "category": "opening_range",
+      "weight": 4.995875,
+      "source_score": 0.511052
+    },
+    {
+      "feature": "lower_high",
+      "bucket": "No Lower High",
+      "category": "market_structure",
+      "weight": 4.62483,
+      "source_score": 0.473096
+    },
+    {
+      "feature": "lower_low",
+      "bucket": "No Lower Low",
+      "category": "market_structure",
+      "weight": 4.995875,
+      "source_score": 0.511052
+    },
+    {
+      "feature": "or_position",
+      "bucket": "Above OR High",
+      "category": "opening_range",
+      "weight": 4.995875,
+      "source_score": 0.511052
+    },
+    {
+      "feature": "realized_vol_20",
+      "bucket": "<0.5% (Very Low)",
+      "category": "volatility",
+      "weight": 4.880728,
+      "source_score": 0.499273
+    },
+    {
+      "feature": "roc10_bucket",
+      "bucket": "0% to 1%",
+      "category": "momentum",
+      "weight": 4.880728,
+      "source_score": 0.499273
+    },
+    {
+      "feature": "roc20_bucket",
+      "bucket": "0% to 2%",
+      "category": "momentum",
+      "weight": 4.880728,
+      "source_score": 0.499273
+    },
+    {
+      "feature": "rsi_bucket",
+      "bucket": "70-100 (Overbought)",
+      "category": "momentum",
+      "weight": 4.62483,
+      "source_score": 0.473096
+    },
+    {
+      "feature": "swing_distance",
+      "bucket": "80-100% (Near High)",
+      "category": "market_structure",
+      "weight": 4.880728,
+      "source_score": 0.499273
+    },
+    {
+      "feature": "vwap_side",
+      "bucket": "Above VWAP",
+      "category": "vwap",
+      "weight": 4.995875,
+      "source_score": 0.511052
+    },
+    {
+      "feature": "vwap_slope",
+      "bucket": "Rising (>0.05%)",
+      "category": "vwap",
+      "weight": 0.582753,
+      "source_score": 0.059613
+    }
+  ]
+}
