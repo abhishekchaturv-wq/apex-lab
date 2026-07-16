@@ -43,7 +43,7 @@ def build_summary(
         )
 
     return {
-        "generation_timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "generation_timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
         "generator_version": GENERATOR_VERSION,
         "research_version": _RESEARCH_VERSION,
         "pine_version": PINE_VERSION,
