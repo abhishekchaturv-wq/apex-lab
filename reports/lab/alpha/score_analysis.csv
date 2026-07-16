@@ -1,0 +1,6 @@
+score_bucket,number_of_trades,win_rate,average_return,median_return,expectancy,profit_factor,sharpe,maximum_drawdown
+0-20,0,,,,,,,
+20-40,1,1.0,1.114901,1.114901,1.114901,,0.0,0.0
+40-60,0,,,,,,,
+60-80,0,,,,,,,
+80-100,47,1.0,0.582777,0.663862,0.582777,,2.669762,0.0

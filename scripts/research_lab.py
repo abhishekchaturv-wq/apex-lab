@@ -12,6 +12,12 @@ from typing import Any
 
 import polars as pl
 
+from apex_lab.research.alpha.engine import (
+    DEFAULT_OUTPUT_DIR as DEFAULT_ALPHA_OUTPUT_DIR,
+)
+from apex_lab.research.alpha.engine import (
+    run_alpha_scoring,
+)
 from apex_lab.research.backtest.backtester import (
     DEFAULT_EQUITY_CURVE_OUTPUT,
     DEFAULT_TRADES_OUTPUT,
@@ -31,12 +37,6 @@ from apex_lab.research.context.engine import (
 )
 from apex_lab.research.context.engine import (
     run_context_research,
-)
-from apex_lab.research.alpha.engine import (
-    DEFAULT_OUTPUT_DIR as DEFAULT_ALPHA_OUTPUT_DIR,
-)
-from apex_lab.research.alpha.engine import (
-    run_alpha_scoring,
 )
 from apex_lab.research.factors.factor_engine import (
     DEFAULT_FIXED_BARS as FACTORS_DEFAULT_FIXED_BARS,
