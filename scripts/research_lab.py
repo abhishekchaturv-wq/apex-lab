@@ -32,6 +32,12 @@ from apex_lab.research.context.engine import (
 from apex_lab.research.context.engine import (
     run_context_research,
 )
+from apex_lab.research.alpha.engine import (
+    DEFAULT_OUTPUT_DIR as DEFAULT_ALPHA_OUTPUT_DIR,
+)
+from apex_lab.research.alpha.engine import (
+    run_alpha_scoring,
+)
 from apex_lab.research.factors.factor_engine import (
     DEFAULT_FIXED_BARS as FACTORS_DEFAULT_FIXED_BARS,
 )
@@ -90,12 +96,13 @@ def parse_args() -> argparse.Namespace:
     # Event-driven backtest arguments
     parser.add_argument(
         "--mode",
-        choices=["forward_return", "event", "optimize", "factors", "portfolio", "context"],
+        choices=["forward_return", "event", "optimize", "factors", "portfolio", "context", "alpha"],
         default="forward_return",
         help=(
             "Analysis mode: forward_return (default), event (backtest), "
             "optimize (walk-forward), factors (factor combination research), "
-            "portfolio (portfolio simulation), or context (alpha discovery engine)."
+            "portfolio (portfolio simulation), context (alpha discovery engine), "
+            "or alpha (alpha scoring engine)."
         ),
     )
     parser.add_argument(
@@ -185,6 +192,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=CONTEXT_DEFAULT_FIXED_BARS,
         help="Number of bars to hold per trade in context research (default: 10).",
+    )
+    parser.add_argument(
+        "--alpha-output-dir",
+        type=Path,
+        default=DEFAULT_ALPHA_OUTPUT_DIR,
+        help="Directory for alpha scoring output files (default: reports/lab/alpha).",
     )
     # Brokerage / cost hooks (reserved for future NSE cost models)
     parser.add_argument(
@@ -521,6 +534,23 @@ def run_factors(
     return run_factor_research(df, output_dir=output_dir, fixed_bars=fixed_bars)
 
 
+def run_alpha(
+    data_path: Path,
+    output_dir: Path = DEFAULT_ALPHA_OUTPUT_DIR,
+    fixed_bars: int = CONTEXT_DEFAULT_FIXED_BARS,
+) -> tuple[pl.DataFrame, pl.DataFrame, dict[str, Any], pl.DataFrame, pl.DataFrame]:
+    """Run alpha scoring engine and write reports to disk."""
+    df = load_ohlcv(data_path)
+    result = run_alpha_scoring(df, output_dir=output_dir, fixed_bars=fixed_bars)
+    return (
+        result.scores,
+        result.score_analysis,
+        result.validation,
+        result.top_trades,
+        result.bottom_trades,
+    )
+
+
 def main() -> None:
     """Execute the research lab CLI."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -538,6 +568,26 @@ def main() -> None:
             summary.height,
             leaderboard.height,
         )
+    elif args.mode == "alpha":
+        scores, score_analysis, score_validation, top_trades, bottom_trades = run_alpha(
+            data_path=args.data,
+            output_dir=args.alpha_output_dir,
+            fixed_bars=args.context_bars,
+        )
+        logger.info("Alpha Summary: %s", json.dumps(
+            {
+                "number_of_trades": scores.height,
+                "mean_alpha_score": float(scores["alpha_score"].mean()) if scores.height else None,
+                "median_alpha_score": float(scores["alpha_score"].median()) if scores.height else None,
+                "highest_score": float(scores["alpha_score"].max()) if scores.height else None,
+                "lowest_score": float(scores["alpha_score"].min()) if scores.height else None,
+            },
+            indent=2,
+        ))
+        logger.info("Score Validation: %s", json.dumps(score_validation, indent=2))
+        logger.info("Top 20 Score Buckets:\\n%s", score_analysis.head(20))
+        logger.info("Top 20 Highest Alpha Trades:\\n%s", top_trades.head(20))
+        logger.info("Top 20 Lowest Alpha Trades:\\n%s", bottom_trades.head(20))
     elif args.mode == "event":
         trades, metrics = run_event_backtest(
             data_path=args.data,
