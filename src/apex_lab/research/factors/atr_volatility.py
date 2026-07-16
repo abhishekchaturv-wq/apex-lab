@@ -6,6 +6,7 @@ from typing import Any
 
 import polars as pl
 
+from apex_lab.research.factors._utils import rolling_percentile_rank
 from apex_lab.research.factors.base import Factor
 
 _ATR_PERIOD = 14
@@ -62,7 +63,7 @@ class AtrVolatilityFactor(Factor):
             [pl.col("_atr_tr").rolling_mean(window_size=self._period).alias("atr_14")]
         )
 
-        atr_pct = _rolling_percentile_rank(
+        atr_pct = rolling_percentile_rank(
             enriched.get_column("atr_14"), self._percentile_window
         )
         return enriched.with_columns([atr_pct.alias("atr_pct")]).drop("_atr_tr")
@@ -81,37 +82,3 @@ class AtrVolatilityFactor(Factor):
             "max_pct": self._max_pct,
             "signal": f"ATR percentile in [{self._min_pct}, {self._max_pct}]",
         }
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-
-def _rolling_percentile_rank(series: pl.Series, window: int) -> pl.Series:
-    """Compute rolling percentile rank (0–100) without pandas."""
-    import bisect
-    from collections import deque
-
-    values = series.to_list()
-    out: list[float | None] = [None] * len(values)
-    active_window: deque[float] = deque()
-    sorted_window: list[float] = []
-
-    for index, current in enumerate(values):
-        if current is not None:
-            bisect.insort(sorted_window, current)
-            active_window.append(current)
-
-        if len(active_window) > window:
-            expired = active_window.popleft()
-            expired_index = bisect.bisect_left(sorted_window, expired)
-            del sorted_window[expired_index]
-
-        if current is None or not sorted_window:
-            continue
-
-        rank_position = bisect.bisect_right(sorted_window, current)
-        out[index] = rank_position / len(sorted_window) * 100.0
-
-    return pl.Series(out, dtype=pl.Float64)
