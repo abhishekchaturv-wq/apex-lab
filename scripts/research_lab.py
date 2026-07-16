@@ -23,6 +23,7 @@ from apex_lab.research.backtest.backtester import (
 from apex_lab.research.backtest.backtester import (
     DEFAULT_SUMMARY_OUTPUT as DEFAULT_BACKTEST_SUMMARY_OUTPUT,
 )
+from apex_lab.research.optimization.walkforward_optimizer import optimize as run_optimize
 
 DEFAULT_DATA_PATH = Path("data/raw/30minute/NIFTY BANK.parquet")
 DEFAULT_CSV_OUTPUT = Path("reports/lab/csv/ema_cross_returns.csv")
@@ -59,9 +60,9 @@ def parse_args() -> argparse.Namespace:
     # Event-driven backtest arguments
     parser.add_argument(
         "--mode",
-        choices=["forward_return", "event"],
+        choices=["forward_return", "event", "optimize"],
         default="forward_return",
-        help="Analysis mode: forward_return (default) or event (backtest).",
+        help="Analysis mode: forward_return (default), event (backtest), or optimize (walk-forward).",
     )
     parser.add_argument(
         "--exit",
@@ -93,6 +94,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_BACKTEST_SUMMARY_OUTPUT,
         help="Path for the backtest summary JSON.",
+    )
+    parser.add_argument(
+        "--optimize-output-dir",
+        type=Path,
+        default=Path("reports/lab/walkforward"),
+        help="Directory for walk-forward optimisation output files (default: reports/lab/walkforward).",
     )
     return parser.parse_args()
 
@@ -343,6 +350,20 @@ def main() -> None:
             (metrics["win_rate"] or 0.0) * 100.0,
             metrics["expectancy"] or 0.0,
         )
+    elif args.mode == "optimize":
+        df = load_ohlcv(args.data)
+        summary, leaderboard, best_params = run_optimize(df, output_dir=args.optimize_output_dir)
+        logger.info(
+            "Optimisation complete: %d window-pair rows evaluated",
+            summary.height,
+        )
+        if best_params:
+            logger.info(
+                "Best parameters: fast_ema=%d, slow_ema=%d (mean_profit_factor=%.4f)",
+                best_params["fast_ema"],
+                best_params["slow_ema"],
+                best_params.get("mean_profit_factor") or 0.0,
+            )
     else:
         bullish_returns, summary = run_research_lab(args.data, args.csv_output, args.json_output)
         logger.info(
