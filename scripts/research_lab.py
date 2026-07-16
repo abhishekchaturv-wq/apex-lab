@@ -66,6 +66,7 @@ from apex_lab.research.portfolio.report import (
     DEFAULT_PORTFOLIO_OUTPUT_DIR,
     write_portfolio_reports,
 )
+from apex_lab.research.signal_dataset import SignalDatasetBuilder, SignalDatasetConfig
 from apex_lab.research.strategies.engine import (
     DEFAULT_OUTPUT_DIR as STRATEGIES_DEFAULT_OUTPUT_DIR,
 )
@@ -74,6 +75,7 @@ from apex_lab.research.strategies.engine import run_strategy_research
 DEFAULT_DATA_PATH = Path("data/raw/30minute/NIFTY BANK.parquet")
 DEFAULT_CSV_OUTPUT = Path("reports/lab/csv/ema_cross_returns.csv")
 DEFAULT_JSON_OUTPUT = Path("reports/lab/json/ema_cross_summary.json")
+DEFAULT_SIGNAL_DATASET_OUTPUT_DIR = Path("reports/lab/signal_dataset")
 FORWARD_RETURN_HORIZONS: tuple[int, ...] = (1, 3, 5, 10, 20)
 REQUIRED_COLUMNS: tuple[str, ...] = ("timestamp", "open", "high", "low", "close", "volume")
 ATR_PERIOD = 14
@@ -116,6 +118,7 @@ def parse_args() -> argparse.Namespace:
             "alpha",
             "pine",
             "strategies",
+            "signal_dataset",
         ],
         default="forward_return",
         help=(
@@ -123,7 +126,8 @@ def parse_args() -> argparse.Namespace:
             "optimize (walk-forward), factors (factor combination research), "
             "portfolio (portfolio simulation), context (alpha discovery engine), "
             "alpha (alpha scoring engine), pine (Pine Script generator), "
-            "or strategies (strategy research framework)."
+            "strategies (strategy research framework), or signal_dataset "
+            "(candle-level supervised signal dataset builder)."
         ),
     )
     parser.add_argument(
@@ -280,6 +284,24 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("reports/lab/strategy"),
         help="Directory for strategy research output files (default: reports/lab/strategy).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=DEFAULT_SIGNAL_DATASET_OUTPUT_DIR,
+        help="Directory for signal dataset artifacts (default: reports/lab/signal_dataset).",
+    )
+    parser.add_argument(
+        "--symbol",
+        type=str,
+        default=None,
+        help="Symbol metadata override for signal dataset mode.",
+    )
+    parser.add_argument(
+        "--interval",
+        type=str,
+        default=None,
+        help="Interval metadata override for signal dataset mode.",
     )
     return parser.parse_args()
 
@@ -633,6 +655,28 @@ def run_strategies(
     return run_strategy_research(df, output_dir=output_dir, strategy_name=strategy_name)
 
 
+def run_signal_dataset(
+    data_path: Path,
+    output_dir: Path = DEFAULT_SIGNAL_DATASET_OUTPUT_DIR,
+    symbol: str | None = None,
+    interval: str | None = None,
+) -> tuple[pl.DataFrame, dict[str, Any], dict[str, Any], list[str]]:
+    """Build and persist a candle-level supervised signal discovery dataset."""
+    df = load_ohlcv(data_path)
+    resolved_symbol = symbol or data_path.stem
+    resolved_interval = interval or data_path.parent.name
+    builder = SignalDatasetBuilder()
+    result = builder.build(
+        df,
+        SignalDatasetConfig(
+            symbol=resolved_symbol,
+            interval=resolved_interval,
+            output_dir=output_dir,
+        ),
+    )
+    return result.dataset, result.summary, result.schema, result.feature_columns
+
+
 def main() -> None:
     """Execute the research lab CLI."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -755,6 +799,20 @@ def main() -> None:
                 top["strategy"],
                 top.get("composite_score") or 0.0,
             )
+    elif args.mode == "signal_dataset":
+        dataset, summary, _, feature_columns = run_signal_dataset(
+            data_path=args.data,
+            output_dir=args.output_dir,
+            symbol=args.symbol,
+            interval=args.interval,
+        )
+        logger.info(
+            "Signal dataset complete: rows=%d, features=%d, labels=%d, output=%s",
+            dataset.height,
+            summary["feature_count"],
+            summary["label_count"],
+            args.output_dir,
+        )
     else:
         bullish_returns, summary = run_research_lab(args.data, args.csv_output, args.json_output)
         logger.info(
