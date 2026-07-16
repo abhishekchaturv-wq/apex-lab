@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import logging
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -139,14 +141,12 @@ def compute_ema_signals(df: pl.DataFrame) -> pl.DataFrame:
             .fill_null(False)
             .alias("bearish_crossover"),
         ]
-    ).with_columns(
+    )
+
+    atr_pct = _rolling_percentile_rank(enriched.get_column("atr_14"), ATR_PERCENTILE_WINDOW)
+    enriched = enriched.with_columns(
         [
-            pl.col("atr_14")
-            .map_batches(
-                lambda series: _rolling_percentile_rank(series, ATR_PERCENTILE_WINDOW),
-                return_dtype=pl.Float64,
-            )
-            .alias("atr_pct"),
+            atr_pct.alias("atr_pct"),
             (pl.col("atr_14") / (pl.col("close") + epsilon) * 100.0).alias("atr_norm"),
         ]
     )
@@ -164,18 +164,24 @@ def _rolling_percentile_rank(series: pl.Series, window: int) -> pl.Series:
     """Compute the rolling percentile rank (0–100) of *series*."""
     values = series.to_list()
     out: list[float | None] = [None] * len(values)
+    active_window: deque[float] = deque()
+    sorted_window: list[float] = []
 
     for index, current in enumerate(values):
-        if current is None:
+        if current is not None:
+            bisect.insort(sorted_window, current)
+            active_window.append(current)
+
+        if len(active_window) > window:
+            expired = active_window.popleft()
+            expired_index = bisect.bisect_left(sorted_window, expired)
+            del sorted_window[expired_index]
+
+        if current is None or not sorted_window:
             continue
 
-        start = max(0, index - window + 1)
-        history = [value for value in values[start : index + 1] if value is not None]
-        if not history:
-            continue
-
-        less_or_equal = sum(1 for value in history if value <= current)
-        out[index] = less_or_equal / len(history) * 100.0
+        less_or_equal = bisect.bisect_right(sorted_window, current)
+        out[index] = less_or_equal / len(sorted_window) * 100.0
 
     return pl.Series(out, dtype=pl.Float64)
 
