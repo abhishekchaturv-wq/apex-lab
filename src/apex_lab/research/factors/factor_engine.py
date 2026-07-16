@@ -269,15 +269,21 @@ def _collect_vwap_diagnostics(
     vwap_signal = registry["VWAP"].signal(enriched).fill_null(False)
     filtered_signal = ema_signal & vwap_signal
 
+    close_above = int(
+        enriched.select((pl.col("close") > pl.col("vwap")).cast(pl.Int64).sum()).item()
+    )
+    close_below = int(
+        enriched.select((pl.col("close") < pl.col("vwap")).cast(pl.Int64).sum()).item()
+    )
     stats = {
         "first_20_vwap_values": enriched.select("vwap").head(20)["vwap"].to_list(),
         "min_vwap": enriched.select(pl.col("vwap").min()).item(),
         "max_vwap": enriched.select(pl.col("vwap").max()).item(),
         "null_vwap_values": int(enriched["vwap"].null_count()),
-        "close_above_vwap_bars": int((pl.col("close") > pl.col("vwap")).cast(pl.Int64).sum().fill_null(0)),
-        "close_below_vwap_bars": int((pl.col("close") < pl.col("vwap")).cast(pl.Int64).sum().fill_null(0)),
+        "close_above_vwap_bars": close_above,
+        "close_below_vwap_bars": close_below,
         "bullish_vwap_signals": int(vwap_signal.sum()),
-        "bearish_vwap_signals": int((pl.Series(~vwap_signal) & enriched["vwap"].is_not_null()).sum()),
+        "bearish_vwap_signals": int((~vwap_signal & enriched["vwap"].is_not_null()).sum()),
         "ema_crossover_count_before_filtering": int(ema_signal.sum()),
         "signals_before_vwap_filter": int(ema_signal.sum()),
         "signals_after_vwap_filter": int(filtered_signal.sum()),
