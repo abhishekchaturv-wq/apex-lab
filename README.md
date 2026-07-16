@@ -49,6 +49,10 @@ python scripts/research_lab.py --mode context
 # Alpha scoring
 python scripts/research_lab.py --mode alpha
 
+# Signal discovery dataset builder
+python scripts/research_lab.py --mode signal_dataset \
+    --data ~/kite-test/apex-data-lake/raw/30minute/NIFTY\ BANK.parquet
+
 # Pine Script generator
 python scripts/research_lab.py --mode pine
 ```
