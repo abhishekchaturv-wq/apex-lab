@@ -120,7 +120,6 @@ def evaluate_rule(
         "expectancy": round(expectancy, 6),
         "average_mfe": avg_mfe,
         "average_mae": avg_mae,
-        "average_holding_return": round(avg_return, 6),
     }
 
 
@@ -154,7 +153,6 @@ def evaluate_all_candidates(
             "expectancy": [r["expectancy"] for r in rows],
             "average_mfe": [r["average_mfe"] for r in rows],
             "average_mae": [r["average_mae"] for r in rows],
-            "average_holding_return": [r["average_holding_return"] for r in rows],
         }
     )
     return table
@@ -175,6 +173,5 @@ def _empty_stats_frame() -> pl.DataFrame:
             "expectancy": pl.Series([], dtype=pl.Float64),
             "average_mfe": pl.Series([], dtype=pl.Float64),
             "average_mae": pl.Series([], dtype=pl.Float64),
-            "average_holding_return": pl.Series([], dtype=pl.Float64),
         }
     )

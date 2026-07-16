@@ -49,7 +49,10 @@ def build_summary_payload(
 
     # Rejected signals: non-robust entries.
     all_labels = set(ranked.get_column("rule_label").to_list())
-    robust_labels = set(robust_signals.get_column("rule_label").to_list()) if not robust_signals.is_empty() else set()
+    if robust_signals.is_empty():
+        robust_labels: set[str] = set()
+    else:
+        robust_labels = set(robust_signals.get_column("rule_label").to_list())
     rejected = list(all_labels - robust_labels)[:20]
 
     return _sanitize(

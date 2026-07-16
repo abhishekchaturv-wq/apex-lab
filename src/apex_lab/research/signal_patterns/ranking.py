@@ -218,7 +218,6 @@ def _empty_ranked_frame() -> pl.DataFrame:
             "expectancy": pl.Series([], dtype=pl.Float64),
             "average_mfe": pl.Series([], dtype=pl.Float64),
             "average_mae": pl.Series([], dtype=pl.Float64),
-            "average_holding_return": pl.Series([], dtype=pl.Float64),
             "is_robust": pl.Series([], dtype=pl.Boolean),
             "composite_score": pl.Series([], dtype=pl.Float64),
         }
