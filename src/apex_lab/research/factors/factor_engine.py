@@ -270,10 +270,10 @@ def _collect_vwap_diagnostics(
     filtered_signal = ema_signal & vwap_signal
 
     close_above = int(
-        enriched.select((pl.col("close") > pl.col("vwap")).cast(pl.Int64).sum()).item()
+        enriched.select((pl.col("close") > pl.col("vwap")).sum()).item()
     )
     close_below = int(
-        enriched.select((pl.col("close") < pl.col("vwap")).cast(pl.Int64).sum()).item()
+        enriched.select((pl.col("close") < pl.col("vwap")).sum()).item()
     )
     stats = {
         "first_20_vwap_values": enriched.select("vwap").head(20)["vwap"].to_list(),
