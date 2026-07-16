@@ -66,6 +66,10 @@ from apex_lab.research.portfolio.report import (
     DEFAULT_PORTFOLIO_OUTPUT_DIR,
     write_portfolio_reports,
 )
+from apex_lab.research.strategies.engine import (
+    DEFAULT_OUTPUT_DIR as STRATEGIES_DEFAULT_OUTPUT_DIR,
+)
+from apex_lab.research.strategies.engine import run_strategy_research
 
 DEFAULT_DATA_PATH = Path("data/raw/30minute/NIFTY BANK.parquet")
 DEFAULT_CSV_OUTPUT = Path("reports/lab/csv/ema_cross_returns.csv")
@@ -102,13 +106,24 @@ def parse_args() -> argparse.Namespace:
     # Event-driven backtest arguments
     parser.add_argument(
         "--mode",
-        choices=["forward_return", "event", "optimize", "factors", "portfolio", "context", "alpha", "pine"],
+        choices=[
+            "forward_return",
+            "event",
+            "optimize",
+            "factors",
+            "portfolio",
+            "context",
+            "alpha",
+            "pine",
+            "strategies",
+        ],
         default="forward_return",
         help=(
             "Analysis mode: forward_return (default), event (backtest), "
             "optimize (walk-forward), factors (factor combination research), "
             "portfolio (portfolio simulation), context (alpha discovery engine), "
-            "alpha (alpha scoring engine), or pine (Pine Script generator)."
+            "alpha (alpha scoring engine), pine (Pine Script generator), "
+            "or strategies (strategy research framework)."
         ),
     )
     parser.add_argument(
@@ -247,6 +262,24 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.0,
         help="Slippage in basis points (default: 0; future use).",
+    )
+    # ---------------------------------------------------------------------------
+    # Strategy research arguments
+    # ---------------------------------------------------------------------------
+    parser.add_argument(
+        "--strategy",
+        type=str,
+        default=None,
+        help=(
+            "Name of a single strategy to evaluate (e.g. 'EMA Crossover'). "
+            "Defaults to evaluating all registered strategies."
+        ),
+    )
+    parser.add_argument(
+        "--strategies-output-dir",
+        type=Path,
+        default=Path("reports/lab/strategy"),
+        help="Directory for strategy research output files (default: reports/lab/strategy).",
     )
     return parser.parse_args()
 
@@ -581,6 +614,25 @@ def run_alpha(
     )
 
 
+def run_strategies(
+    data_path: Path,
+    output_dir: Path = STRATEGIES_DEFAULT_OUTPUT_DIR,
+    strategy_name: str | None = None,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Run strategy research framework and write ranked leaderboard reports.
+
+    Args:
+        data_path: Path to the OHLCV parquet file.
+        output_dir: Directory for strategy report files.
+        strategy_name: Evaluate only this strategy when provided.
+
+    Returns:
+        A tuple of (leaderboard DataFrame, metrics DataFrame).
+    """
+    df = load_ohlcv(data_path)
+    return run_strategy_research(df, output_dir=output_dir, strategy_name=strategy_name)
+
+
 def main() -> None:
     """Execute the research lab CLI."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -686,6 +738,23 @@ def main() -> None:
             summary["total_return_pct"],
             summary["maximum_drawdown"],
         )
+    elif args.mode == "strategies":
+        leaderboard, metrics_df = run_strategies(
+            data_path=args.data,
+            output_dir=args.strategies_output_dir,
+            strategy_name=args.strategy,
+        )
+        logger.info(
+            "Strategy research complete: %d strategies evaluated",
+            metrics_df.height,
+        )
+        if leaderboard.height > 0:
+            top = leaderboard.row(0, named=True)
+            logger.info(
+                "Top strategy: %s (composite_score=%.4f)",
+                top["strategy"],
+                top.get("composite_score") or 0.0,
+            )
     else:
         bullish_returns, summary = run_research_lab(args.data, args.csv_output, args.json_output)
         logger.info(

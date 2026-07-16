@@ -1,0 +1,1 @@
+"""Strategy research sub-package."""
