@@ -73,6 +73,10 @@ from apex_lab.research.signal_discovery import (
 from apex_lab.research.signal_discovery import (
     run_signal_discovery as run_signal_discovery_engine,
 )
+from apex_lab.research.signal_patterns import (
+    DEFAULT_OUTPUT_DIR as DEFAULT_SIGNAL_PATTERNS_OUTPUT_DIR,
+)
+from apex_lab.research.signal_patterns import run_signal_patterns as run_signal_patterns_engine
 from apex_lab.research.strategies.engine import (
     DEFAULT_OUTPUT_DIR as STRATEGIES_DEFAULT_OUTPUT_DIR,
 )
@@ -126,6 +130,7 @@ def parse_args() -> argparse.Namespace:
             "strategies",
             "signal_dataset",
             "signal_discovery",
+            "signal_patterns",
         ],
         default="forward_return",
         help=(
@@ -134,8 +139,9 @@ def parse_args() -> argparse.Namespace:
             "portfolio (portfolio simulation), context (alpha discovery engine), "
             "alpha (alpha scoring engine), pine (Pine Script generator), "
             "strategies (strategy research framework), signal_dataset "
-            "(candle-level supervised signal dataset builder), or "
-            "signal_discovery (feature importance and signal discovery engine)."
+            "(candle-level supervised signal dataset builder), "
+            "signal_discovery (feature importance and signal discovery engine), or "
+            "signal_patterns (high-expectancy signal pattern discovery engine)."
         ),
     )
     parser.add_argument(
@@ -303,7 +309,14 @@ def parse_args() -> argparse.Namespace:
         "--dataset",
         type=Path,
         default=None,
-        help="Path to signal dataset parquet for signal_discovery mode (overrides --data).",
+        help="Path to signal dataset parquet for signal_discovery/signal_patterns mode (overrides --data).",
+    )
+    parser.add_argument(
+        "--feature-ranking",
+        type=Path,
+        default=None,
+        dest="feature_ranking",
+        help="Path to feature_importance.csv for signal_patterns mode (PR19 output).",
     )
     parser.add_argument(
         "--symbol",
@@ -700,6 +713,29 @@ def run_signal_discovery(
     return result.summary
 
 
+def run_signal_patterns(
+    dataset_path: Path,
+    feature_ranking_path: Path,
+    output_dir: Path = DEFAULT_SIGNAL_PATTERNS_OUTPUT_DIR,
+) -> dict[str, Any]:
+    """Run the High-Expectancy Signal Discovery Engine.
+
+    Args:
+        dataset_path: Path to the signal dataset parquet (PR18 output).
+        feature_ranking_path: Path to feature_importance.csv (PR19 output).
+        output_dir: Directory for output reports.
+
+    Returns:
+        The summary dictionary.
+    """
+    result = run_signal_patterns_engine(
+        dataset_path=dataset_path,
+        feature_ranking_path=feature_ranking_path,
+        output_dir=output_dir,
+    )
+    return result.summary
+
+
 def main() -> None:
     """Execute the research lab CLI."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -848,6 +884,28 @@ def main() -> None:
             "Signal discovery complete: top_features=%d, top_combinations=%d, output=%s",
             len(summary.get("top_features", [])),
             len(summary.get("top_feature_combinations", [])),
+            output_dir,
+        )
+    elif args.mode == "signal_patterns":
+        dataset_path = args.dataset or args.data
+        if args.feature_ranking is None:
+            raise SystemExit(
+                "signal_patterns mode requires --feature-ranking <path/to/feature_importance.csv>"
+            )
+        output_dir = (
+            DEFAULT_SIGNAL_PATTERNS_OUTPUT_DIR
+            if args.output_dir == DEFAULT_SIGNAL_DATASET_OUTPUT_DIR
+            else args.output_dir
+        )
+        summary = run_signal_patterns(
+            dataset_path=dataset_path,
+            feature_ranking_path=args.feature_ranking,
+            output_dir=output_dir,
+        )
+        logger.info(
+            "Signal patterns complete: top_signals=%d, robust=%d, output=%s",
+            len(summary.get("top_20_signals", [])),
+            summary.get("total_robust_signals", 0),
             output_dir,
         )
     else:
