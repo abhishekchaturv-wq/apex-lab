@@ -25,6 +25,7 @@ DEFAULT_TRADES_OUTPUT = Path("reports/lab/backtest/trades.csv")
 DEFAULT_SUMMARY_OUTPUT = Path("reports/lab/backtest/summary.json")
 DEFAULT_EQUITY_CURVE_FILENAME = "equity_curve.csv"
 DEFAULT_EQUITY_CURVE_OUTPUT = Path("reports/lab/backtest/equity_curve.csv")
+VOLATILITY_HIGH_THRESHOLD = 50.0
 REGIME_SUMMARY_COLUMNS: tuple[str, ...] = ("trend_regime", "volatility_regime")
 
 
@@ -105,7 +106,9 @@ def run_backtest(
                 if atr_pct[i] is None:
                     volatility_regime = "unknown"
                 else:
-                    volatility_regime = "high" if atr_pct[i] >= 50.0 else "low"
+                    volatility_regime = (
+                        "high" if atr_pct[i] >= VOLATILITY_HIGH_THRESHOLD else "low"
+                    )
         else:
             # Determine whether to exit at bar *i*
             should_exit = False

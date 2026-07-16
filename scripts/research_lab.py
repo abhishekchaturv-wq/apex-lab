@@ -173,7 +173,7 @@ def _rolling_percentile_rank(series: pl.Series, window: int) -> pl.Series:
 
     for index, current in enumerate(values):
         if current is not None:
-            # The configured ATR percentile window is small and bounded, so
+            # The configured ATR percentile window is small (100 bars) and bounded, so
             # maintaining a sorted in-memory window keeps the implementation simple.
             bisect.insort(sorted_window, current)
             active_window.append(current)
