@@ -32,28 +32,29 @@ def get_logger(name: str) -> logging.Logger:
     # importing this module never requires Kite credentials to be present
     # (e.g. during offline test runs).
     try:
-        from apex_lab.config.settings import settings  # noqa: PLC0415
         from pydantic import ValidationError  # noqa: PLC0415
+
+        from apex_lab.config.settings import settings  # noqa: PLC0415
 
         log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
     except ValidationError:
         log_level = logging.INFO
 
     logger.setLevel(log_level)
-    
+
     # Return if handlers already configured
     if logger.handlers:
         return logger
-    
+
     # Create console handler
     handler = logging.StreamHandler()
     handler.setLevel(log_level)
-    
+
     # Create formatter
     formatter = logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT)
     handler.setFormatter(formatter)
-    
+
     # Add handler to logger
     logger.addHandler(handler)
-    
+
     return logger
