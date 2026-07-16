@@ -47,14 +47,13 @@ dayFilter      = dayofweek != dayofweek.sunday and dayofweek != dayofweek.saturd
 
 // ── Alpha Score ──────────────────────────────────────────────────────────
 // Generated from Alpha Scoring Engine
-trendScore          = (close > ema200 ? 1.0 : 0.0) * 24.518787
-momentumScore       = (rsiVal > 50 ? 1.0 : 0.0) * 19.267014
-volatilityScore     = (atrVal / close * 100 < 1.5 ? 1.0 : 0.0) * 12.376232
-vwapScore           = (close > vwapVal ? 1.0 : 0.0) * 5.578628
-mktStructureScore   = (close > ta.highest(high[1], 5) ? 1.0 : 0.0) * 23.844402
-orScore             = (close > ta.highest(high[1], 13) ? 1.0 : 0.0) * 14.414937
-timeScore           = (hour >= 9 and hour <= 14 ? 1.0 : 0.0) * 0
-rawAlpha            = trendScore + momentumScore + volatilityScore + vwapScore + mktStructureScore + orScore + timeScore
+trendScore           = (close > ema200 ? 1.0 : 0.0) * 24.518787
+momentumScore        = (rsiVal > 50 ? 1.0 : 0.0) * 19.267014
+volatilityScore      = (atrVal / close * 100 < 1.5 ? 1.0 : 0.0) * 12.376232
+vwapScore            = (close > vwapVal ? 1.0 : 0.0) * 5.578628
+mktStructureScore    = (close > ta.highest(high[1], 5) ? 1.0 : 0.0) * 23.844402
+orScore              = (close > ta.highest(high[1], 13) ? 1.0 : 0.0) * 14.414937
+rawAlpha            = trendScore + momentumScore + volatilityScore + vwapScore + mktStructureScore + orScore
 totalWeight         = 100.0
 alphaScore          = totalWeight > 0 ? math.min(rawAlpha / totalWeight * 100, 100) : 0.0
 

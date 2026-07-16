@@ -105,34 +105,62 @@ def render_context_filters(best_features: dict[str, Any]) -> str:
 def render_alpha_score(weights: list[dict[str, Any]]) -> str:
     """Render the alpha score block using per-category weights.
 
+    Only categories with a non-zero total weight are emitted.  This prevents
+    redundant ``score = expr * 0`` lines in the generated Pine Script.
+
     Args:
         weights: List of weight entries loaded from ``weights.json``.
 
     Returns:
         Formatted Pine Script alpha score block.
     """
-    trend_w = _category_weight(weights, "trend")
-    momentum_w = _category_weight(weights, "momentum")
-    volatility_w = _category_weight(weights, "volatility")
-    vwap_w = _category_weight(weights, "vwap")
-    market_structure_w = _category_weight(weights, "market_structure")
-    opening_range_w = _category_weight(weights, "opening_range")
-    time_w = _category_weight(weights, "time")
+    # Map category -> (Pine expression, weight value)
+    CATEGORY_EXPRS: dict[str, str] = {
+        "trend": "close > ema200 ? 1.0 : 0.0",
+        "momentum": "rsiVal > 50 ? 1.0 : 0.0",
+        "volatility": "atrVal / close * 100 < 1.5 ? 1.0 : 0.0",
+        "vwap": "close > vwapVal ? 1.0 : 0.0",
+        "market_structure": "close > ta.highest(high[1], 5) ? 1.0 : 0.0",
+        "opening_range": "close > ta.highest(high[1], 13) ? 1.0 : 0.0",
+        "time": "hour >= 9 and hour <= 14 ? 1.0 : 0.0",
+    }
 
-    total = round(trend_w + momentum_w + volatility_w + vwap_w + market_structure_w + opening_range_w + time_w, 6)
+    # Variable name for each category score
+    CATEGORY_VARS: dict[str, str] = {
+        "trend": "trendScore",
+        "momentum": "momentumScore",
+        "volatility": "volatilityScore",
+        "vwap": "vwapScore",
+        "market_structure": "mktStructureScore",
+        "opening_range": "orScore",
+        "time": "timeScore",
+    }
+
+    active: list[tuple[str, str, float]] = []  # (var_name, expr, weight)
+    for category, var_name in CATEGORY_VARS.items():
+        w = _category_weight(weights, category)
+        if w != 0.0 and category in CATEGORY_EXPRS:
+            active.append((var_name, CATEGORY_EXPRS[category], w))
+
+    total = round(sum(w for _, _, w in active), 6)
     if total == 0.0:
         total = 1.0  # prevent division by zero
 
-    return T.ALPHA_SCORE_TEMPLATE.format(
-        trend_weight=trend_w,
-        momentum_weight=momentum_w,
-        volatility_weight=volatility_w,
-        vwap_weight=vwap_w,
-        market_structure_weight=market_structure_w,
-        opening_range_weight=opening_range_w,
-        time_weight=time_w,
-        total_weight=total,
-    )
+    lines: list[str] = [
+        "// ── Alpha Score ──────────────────────────────────────────────────────────",
+        "// Generated from Alpha Scoring Engine",
+    ]
+    raw_parts: list[str] = []
+    for var_name, expr, w in active:
+        lines.append(f"{var_name:<20} = ({expr}) * {w}")
+        raw_parts.append(var_name)
+
+    raw_sum = " + ".join(raw_parts) if raw_parts else "0.0"
+    lines.append(f"rawAlpha            = {raw_sum}")
+    lines.append(f"totalWeight         = {total}")
+    lines.append("alphaScore          = totalWeight > 0 ? math.min(rawAlpha / totalWeight * 100, 100) : 0.0")
+
+    return "\n".join(lines)
 
 
 def render_pine_script(
