@@ -33,6 +33,18 @@ from apex_lab.research.factors.factor_engine import (
     run_factor_research,
 )
 from apex_lab.research.optimization.walkforward_optimizer import optimize as run_optimize
+from apex_lab.research.portfolio.metrics import (
+    compute_monthly_returns,
+    compute_portfolio_metrics,
+    compute_rolling_drawdown,
+    compute_rolling_sharpe,
+    compute_yearly_returns,
+)
+from apex_lab.research.portfolio.portfolio import PositionSizing, simulate_portfolio
+from apex_lab.research.portfolio.report import (
+    DEFAULT_PORTFOLIO_OUTPUT_DIR,
+    write_portfolio_reports,
+)
 
 DEFAULT_DATA_PATH = Path("data/raw/30minute/NIFTY BANK.parquet")
 DEFAULT_CSV_OUTPUT = Path("reports/lab/csv/ema_cross_returns.csv")
@@ -69,11 +81,12 @@ def parse_args() -> argparse.Namespace:
     # Event-driven backtest arguments
     parser.add_argument(
         "--mode",
-        choices=["forward_return", "event", "optimize", "factors"],
+        choices=["forward_return", "event", "optimize", "factors", "portfolio"],
         default="forward_return",
         help=(
             "Analysis mode: forward_return (default), event (backtest), "
-            "optimize (walk-forward), or factors (factor combination research)."
+            "optimize (walk-forward), factors (factor combination research), "
+            "or portfolio (portfolio simulation)."
         ),
     )
     parser.add_argument(
@@ -124,6 +137,52 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=FACTORS_DEFAULT_FIXED_BARS,
         help="Number of bars to hold per trade in factor research (default: 10).",
+    )
+    # ---------------------------------------------------------------------------
+    # Portfolio simulation arguments
+    # ---------------------------------------------------------------------------
+    parser.add_argument(
+        "--initial-capital",
+        type=float,
+        default=25_000.0,
+        help="Starting capital for portfolio simulation (default: 25000).",
+    )
+    parser.add_argument(
+        "--position-sizing",
+        choices=["fixed", "percent_equity", "risk_percent"],
+        default="percent_equity",
+        help="Position-sizing strategy (default: percent_equity).",
+    )
+    parser.add_argument(
+        "--risk-percent",
+        type=float,
+        default=1.0,
+        help="Percentage of equity risked per trade for risk_percent sizing (default: 1.0).",
+    )
+    parser.add_argument(
+        "--portfolio-output-dir",
+        type=Path,
+        default=DEFAULT_PORTFOLIO_OUTPUT_DIR,
+        help="Directory for portfolio simulation output files (default: reports/lab/portfolio).",
+    )
+    # Brokerage / cost hooks (reserved for future NSE cost models)
+    parser.add_argument(
+        "--brokerage",
+        type=float,
+        default=0.0,
+        help="Flat brokerage cost per trade (default: 0; future use).",
+    )
+    parser.add_argument(
+        "--exchange-fees",
+        type=float,
+        default=0.0,
+        help="Exchange fee rate (default: 0; future use).",
+    )
+    parser.add_argument(
+        "--slippage-bps",
+        type=float,
+        default=0.0,
+        help="Slippage in basis points (default: 0; future use).",
     )
     return parser.parse_args()
 
@@ -354,6 +413,55 @@ def run_event_backtest(
     return trades, metrics
 
 
+def run_portfolio(
+    data_path: Path,
+    initial_capital: float = 25_000.0,
+    position_sizing: PositionSizing = "percent_equity",
+    risk_percent: float = 1.0,
+    output_dir: Path = DEFAULT_PORTFOLIO_OUTPUT_DIR,
+    brokerage: float = 0.0,
+    exchange_fees: float = 0.0,
+    slippage_bps: float = 0.0,
+) -> tuple[dict, pl.DataFrame]:
+    """Run portfolio simulation and write all reports to *output_dir*.
+
+    Args:
+        data_path: Path to the OHLCV parquet file.
+        initial_capital: Starting capital.
+        position_sizing: Sizing strategy.
+        risk_percent: Risk percentage for ``risk_percent`` sizing.
+        output_dir: Destination directory for all report files.
+        brokerage: Reserved brokerage parameter (default 0).
+        exchange_fees: Reserved exchange-fees parameter (default 0).
+        slippage_bps: Reserved slippage parameter (default 0).
+
+    Returns:
+        A tuple of (summary dict, equity DataFrame).
+    """
+    df = load_ohlcv(data_path)
+    enriched = compute_ema_signals(df)
+    trades = run_backtest(enriched, exit_mode="opposite_crossover")
+
+    equity_df = simulate_portfolio(
+        trades,
+        initial_capital=initial_capital,
+        position_sizing=position_sizing,
+        risk_percent=risk_percent,
+        brokerage=brokerage,
+        exchange_fees=exchange_fees,
+        slippage_bps=slippage_bps,
+    )
+
+    summary = compute_portfolio_metrics(equity_df, initial_capital=initial_capital)
+    monthly = compute_monthly_returns(equity_df)
+    yearly = compute_yearly_returns(equity_df)
+    rolling_sharpe = compute_rolling_sharpe(equity_df)
+    rolling_dd = compute_rolling_drawdown(equity_df)
+
+    write_portfolio_reports(equity_df, summary, monthly, yearly, rolling_sharpe, rolling_dd, output_dir)
+    return summary, equity_df
+
+
 def run_factors(
     data_path: Path,
     output_dir: Path = FACTORS_DEFAULT_OUTPUT_DIR,
@@ -417,6 +525,25 @@ def main() -> None:
             "Factor research complete: %d combinations evaluated, %d total trades",
             leaderboard.height,
             summary.height,
+        )
+    elif args.mode == "portfolio":
+        summary, equity_df = run_portfolio(
+            data_path=args.data,
+            initial_capital=args.initial_capital,
+            position_sizing=args.position_sizing,
+            risk_percent=args.risk_percent,
+            output_dir=args.portfolio_output_dir,
+            brokerage=args.brokerage,
+            exchange_fees=args.exchange_fees,
+            slippage_bps=args.slippage_bps,
+        )
+        logger.info(
+            "Portfolio simulation complete: %d trades, ending_capital=%.2f, "
+            "total_return=%.2f%%, max_drawdown=%.2f%%",
+            summary["number_of_trades"],
+            summary["ending_capital"],
+            summary["total_return_pct"],
+            summary["maximum_drawdown"],
         )
     else:
         bullish_returns, summary = run_research_lab(args.data, args.csv_output, args.json_output)
