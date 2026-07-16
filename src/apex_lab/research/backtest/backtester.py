@@ -23,6 +23,8 @@ ExitMode = Literal["opposite_crossover", "fixed_bars"]
 
 DEFAULT_TRADES_OUTPUT = Path("reports/lab/backtest/trades.csv")
 DEFAULT_SUMMARY_OUTPUT = Path("reports/lab/backtest/summary.json")
+DEFAULT_EQUITY_CURVE_OUTPUT = Path("reports/lab/backtest/equity_curve.csv")
+REGIME_SUMMARY_COLUMNS: tuple[str, ...] = ("trend_regime", "volatility_regime")
 
 
 # ---------------------------------------------------------------------------
@@ -51,13 +53,21 @@ def run_backtest(
     Returns:
         A Polars DataFrame with one row per completed trade and columns:
         ``entry_time``, ``exit_time``, ``entry_price``, ``exit_price``,
-        ``bars_held``, ``return_pct``, ``exit_reason``.
+        ``bars_held``, ``return_pct``, ``exit_reason``, ``trend_regime``,
+        ``volatility_regime``.
 
     Raises:
         ValueError: If *exit_mode* is not a recognised value.
         ValueError: If *df* is missing required columns.
     """
-    required = {"timestamp", "close", "bullish_crossover", "bearish_crossover"}
+    required = {
+        "timestamp",
+        "close",
+        "bullish_crossover",
+        "bearish_crossover",
+        "ema_200",
+        "atr_pct",
+    }
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"DataFrame is missing required columns: {sorted(missing)}")
@@ -72,12 +82,16 @@ def run_backtest(
     closes = df["close"].to_list()
     bullish = df["bullish_crossover"].to_list()
     bearish = df["bearish_crossover"].to_list()
+    ema_200 = df["ema_200"].to_list()
+    atr_pct = df["atr_pct"].to_list()
 
     trades: list[dict[str, Any]] = []
     in_trade = False
     entry_idx: int = 0
     entry_price: float = 0.0
     entry_time: Any = None
+    trend_regime: str = ""
+    volatility_regime: str = ""
 
     for i in range(len(df)):
         if not in_trade:
@@ -86,6 +100,11 @@ def run_backtest(
                 entry_idx = i
                 entry_price = closes[i]
                 entry_time = timestamps[i]
+                trend_regime = "above_ema200" if closes[i] > ema_200[i] else "below_ema200"
+                if atr_pct[i] is None:
+                    volatility_regime = "unknown"
+                else:
+                    volatility_regime = "high" if atr_pct[i] >= 50.0 else "low"
         else:
             # Determine whether to exit at bar *i*
             should_exit = False
@@ -114,6 +133,8 @@ def run_backtest(
                         "bars_held": bars_held,
                         "return_pct": return_pct,
                         "exit_reason": exit_reason,
+                        "trend_regime": trend_regime,
+                        "volatility_regime": volatility_regime,
                     }
                 )
                 in_trade = False
@@ -128,6 +149,8 @@ def run_backtest(
                 "bars_held": pl.Series([], dtype=pl.Int64),
                 "return_pct": pl.Series([], dtype=pl.Float64),
                 "exit_reason": pl.Series([], dtype=pl.Utf8),
+                "trend_regime": pl.Series([], dtype=pl.Utf8),
+                "volatility_regime": pl.Series([], dtype=pl.Utf8),
             }
         )
 
@@ -159,6 +182,7 @@ def compute_metrics(trades: pl.DataFrame) -> dict[str, Any]:
         - ``average_bars_held`` (float | None)
         - ``maximum_drawdown`` (float | None) — max peak-to-trough drawdown on
           the equity curve (cumulative ``return_pct`` series).
+        - ``regime_summaries`` (dict[str, dict[str, Any]])
     """
     n = trades.height
 
@@ -174,8 +198,13 @@ def compute_metrics(trades: pl.DataFrame) -> dict[str, Any]:
             "largest_loss": None,
             "average_bars_held": None,
             "maximum_drawdown": None,
+            "regime_summaries": {
+                "trend_regime": {},
+                "volatility_regime": {},
+            },
         }
 
+    equity_curve = compute_equity_curve(trades)
     returns = trades["return_pct"]
 
     wins = returns.filter(returns > 0)
@@ -201,11 +230,7 @@ def compute_metrics(trades: pl.DataFrame) -> dict[str, Any]:
     loss_rate = 1.0 - win_rate
     expectancy = win_rate * avg_win + loss_rate * avg_loss
 
-    # Maximum drawdown on the equity curve
-    cum_returns = returns.cum_sum()
-    running_max = cum_returns.cum_max()
-    drawdowns = running_max - cum_returns
-    max_drawdown = float(drawdowns.max())
+    max_drawdown = float(equity_curve["drawdown"].max())
 
     return {
         "number_of_trades": n,
@@ -218,7 +243,74 @@ def compute_metrics(trades: pl.DataFrame) -> dict[str, Any]:
         "largest_loss": largest_loss,
         "average_bars_held": avg_bars,
         "maximum_drawdown": max_drawdown,
+        "regime_summaries": _build_regime_summaries(trades),
     }
+
+
+def compute_equity_curve(trades: pl.DataFrame) -> pl.DataFrame:
+    """Compute equity curve, running peak, and drawdown from completed trades."""
+    if trades.height == 0:
+        exit_dtype = trades.schema.get("exit_time", pl.Datetime)
+        return pl.DataFrame(
+            {
+                "trade_number": pl.Series([], dtype=pl.UInt32),
+                "exit_time": pl.Series([], dtype=exit_dtype),
+                "return_pct": pl.Series([], dtype=pl.Float64),
+                "equity_curve": pl.Series([], dtype=pl.Float64),
+                "running_peak": pl.Series([], dtype=pl.Float64),
+                "drawdown": pl.Series([], dtype=pl.Float64),
+            }
+        )
+
+    return (
+        trades.select(["exit_time", "return_pct"])
+        .with_row_index("trade_number", offset=1)
+        .with_columns(pl.col("return_pct").cum_sum().alias("equity_curve"))
+        .with_columns(
+            [
+                pl.col("equity_curve").cum_max().alias("running_peak"),
+                (pl.col("equity_curve").cum_max() - pl.col("equity_curve")).alias("drawdown"),
+            ]
+        )
+    )
+
+
+def _build_regime_summaries(trades: pl.DataFrame) -> dict[str, dict[str, Any]]:
+    """Build per-regime trade summaries for supported regime columns."""
+    regime_summaries: dict[str, dict[str, Any]] = {}
+
+    for column in REGIME_SUMMARY_COLUMNS:
+        if column not in trades.columns:
+            regime_summaries[column] = {}
+            continue
+
+        regimes = trades.get_column(column).drop_nulls().unique(maintain_order=True).to_list()
+        summaries: dict[str, Any] = {}
+
+        for regime in regimes:
+            subset = trades.filter(pl.col(column) == regime)
+            returns = subset["return_pct"]
+            wins = returns.filter(returns > 0)
+            losses = returns.filter(returns <= 0)
+            trade_count = subset.height
+            win_rate = len(wins) / trade_count if trade_count > 0 else None
+            gross_wins = float(wins.sum()) if wins.len() > 0 else 0.0
+            gross_losses = abs(float(losses.sum())) if losses.len() > 0 else 0.0
+            profit_factor = gross_wins / gross_losses if gross_losses > 0 else None
+            avg_win = float(wins.mean()) if wins.len() > 0 else 0.0
+            avg_loss = float(losses.mean()) if losses.len() > 0 else 0.0
+            expectancy = (win_rate * avg_win) + ((1.0 - win_rate) * avg_loss) if win_rate is not None else None
+
+            summaries[str(regime)] = {
+                "trades": trade_count,
+                "win_rate": win_rate,
+                "profit_factor": profit_factor,
+                "expectancy": expectancy,
+            }
+
+        regime_summaries[column] = summaries
+
+    return regime_summaries
 
 
 # ---------------------------------------------------------------------------
@@ -231,6 +323,7 @@ def write_backtest_reports(
     metrics: dict[str, Any],
     trades_output: Path = DEFAULT_TRADES_OUTPUT,
     summary_output: Path = DEFAULT_SUMMARY_OUTPUT,
+    equity_curve_output: Path | None = None,
 ) -> None:
     """Write the trade log and summary metrics to disk.
 
@@ -239,12 +332,20 @@ def write_backtest_reports(
         metrics: Metrics dictionary from :func:`compute_metrics`.
         trades_output: Destination path for the trades CSV.
         summary_output: Destination path for the summary JSON.
+        equity_curve_output: Destination path for the equity-curve CSV.  If
+            omitted, writes ``equity_curve.csv`` alongside *trades_output*.
     """
+    equity_curve_output = equity_curve_output or trades_output.with_name(DEFAULT_EQUITY_CURVE_OUTPUT.name)
+    equity_curve = compute_equity_curve(trades)
+
     trades_output.parent.mkdir(parents=True, exist_ok=True)
     summary_output.parent.mkdir(parents=True, exist_ok=True)
+    equity_curve_output.parent.mkdir(parents=True, exist_ok=True)
 
     trades.write_csv(trades_output)
+    equity_curve.write_csv(equity_curve_output)
     summary_output.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
     logger.info("Wrote %d trades to %s", trades.height, trades_output)
+    logger.info("Equity curve written to %s", equity_curve_output)
     logger.info("Summary written to %s", summary_output)

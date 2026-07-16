@@ -12,6 +12,7 @@ import polars as pl
 import pytest
 
 from apex_lab.research.backtest.backtester import (
+    compute_equity_curve,
     compute_metrics,
     run_backtest,
     write_backtest_reports,
@@ -51,6 +52,21 @@ def _make_enriched(closes: list[float]) -> pl.DataFrame:
     # Use the script's compute_ema_signals to get proper crossover columns
     rl = _load_script_module()
     return rl.compute_ema_signals(df)
+
+
+def _make_manual_backtest_input() -> pl.DataFrame:
+    """Build a deterministic input frame with explicit regime values."""
+    base_ts = datetime.datetime(2024, 1, 2, 9, 15, 0)
+    return pl.DataFrame(
+        {
+            "timestamp": [base_ts + datetime.timedelta(minutes=30 * i) for i in range(5)],
+            "close": [95.0, 101.0, 104.0, 99.0, 102.0],
+            "bullish_crossover": [False, True, False, False, False],
+            "bearish_crossover": [False, False, False, True, False],
+            "ema_200": [100.0, 100.0, 100.0, 100.0, 100.0],
+            "atr_pct": [25.0, 80.0, 70.0, 60.0, 55.0],
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +115,14 @@ class TestRunBacktestOppositeCrossover:
         assert trades.height == 1
         expected = (trades["exit_price"][0] / trades["entry_price"][0] - 1.0) * 100.0
         assert trades["return_pct"][0] == pytest.approx(expected)
+
+    def test_trade_rows_include_regime_columns(self) -> None:
+        """Completed trades should carry entry-time regime labels."""
+        trades = run_backtest(_make_manual_backtest_input(), exit_mode="opposite_crossover")
+
+        assert trades.height == 1
+        assert trades["trend_regime"][0] == "above_ema200"
+        assert trades["volatility_regime"][0] == "high"
 
     def test_missing_columns_raises(self) -> None:
         """Missing required columns should raise ValueError."""
@@ -273,6 +297,62 @@ class TestComputeMetrics:
         expected_exp = 0.5 * 4.0 + 0.5 * (-2.0)
         assert metrics["expectancy"] == pytest.approx(expected_exp)
 
+    def test_regime_summaries_include_required_fields(self) -> None:
+        """Regime summaries should expose trades, win_rate, profit_factor, and expectancy."""
+        trades = pl.DataFrame(
+            {
+                "entry_time": [
+                    datetime.datetime(2024, 1, 1),
+                    datetime.datetime(2024, 1, 2),
+                    datetime.datetime(2024, 1, 3),
+                ],
+                "exit_time": [
+                    datetime.datetime(2024, 1, 2),
+                    datetime.datetime(2024, 1, 3),
+                    datetime.datetime(2024, 1, 4),
+                ],
+                "entry_price": [100.0, 104.0, 100.0],
+                "exit_price": [104.0, 101.92, 102.0],
+                "bars_held": [1, 1, 1],
+                "return_pct": [4.0, -2.0, 2.0],
+                "exit_reason": ["opposite_crossover"] * 3,
+                "trend_regime": ["above_ema200", "above_ema200", "below_ema200"],
+                "volatility_regime": ["high", "low", "high"],
+            }
+        )
+
+        metrics = compute_metrics(trades)
+
+        trend_summary = metrics["regime_summaries"]["trend_regime"]["above_ema200"]
+        assert trend_summary["trades"] == 2
+        assert trend_summary["win_rate"] == pytest.approx(0.5)
+        assert trend_summary["profit_factor"] == pytest.approx(2.0)
+        assert trend_summary["expectancy"] == pytest.approx(1.0)
+
+
+class TestComputeEquityCurve:
+    """Tests for the equity-curve report."""
+
+    def test_equity_curve_has_peak_and_drawdown(self) -> None:
+        """Equity curve should accumulate returns and track peak/drawdown."""
+        trades = pl.DataFrame(
+            {
+                "exit_time": [
+                    datetime.datetime(2024, 1, 2),
+                    datetime.datetime(2024, 1, 3),
+                    datetime.datetime(2024, 1, 4),
+                ],
+                "return_pct": [3.0, -2.0, 2.0],
+            }
+        )
+
+        equity_curve = compute_equity_curve(trades)
+
+        assert equity_curve["trade_number"].to_list() == [1, 2, 3]
+        assert equity_curve["equity_curve"].to_list() == pytest.approx([3.0, 1.0, 3.0])
+        assert equity_curve["running_peak"].to_list() == pytest.approx([3.0, 3.0, 3.0])
+        assert equity_curve["drawdown"].to_list() == pytest.approx([0.0, 2.0, 0.0])
+
 
 # ---------------------------------------------------------------------------
 # write_backtest_reports
@@ -283,7 +363,7 @@ class TestWriteBacktestReports:
     """Tests for persistence of backtest outputs."""
 
     def test_writes_csv_and_json(self, tmp_path: Path) -> None:
-        """Both trades.csv and summary.json should be created."""
+        """Trades, equity curve, and summary reports should be created."""
         returns = [2.0, -1.0, 3.0]
         trades = pl.DataFrame(
             {
@@ -294,22 +374,30 @@ class TestWriteBacktestReports:
                 "bars_held": [1, 1, 1],
                 "return_pct": returns,
                 "exit_reason": ["opposite_crossover"] * 3,
+                "trend_regime": ["above_ema200", "below_ema200", "above_ema200"],
+                "volatility_regime": ["high", "low", "high"],
             }
         )
         metrics = compute_metrics(trades)
         trades_path = tmp_path / "trades.csv"
+        equity_path = tmp_path / "equity_curve.csv"
         summary_path = tmp_path / "summary.json"
 
         write_backtest_reports(trades, metrics, trades_path, summary_path)
 
         assert trades_path.exists()
+        assert equity_path.exists()
         assert summary_path.exists()
 
         persisted_trades = pl.read_csv(trades_path, try_parse_dates=True)
         assert persisted_trades.height == 3
 
+        persisted_equity = pl.read_csv(equity_path, try_parse_dates=True)
+        assert persisted_equity["drawdown"].to_list() == pytest.approx([0.0, 1.0, 0.0])
+
         persisted_summary = json.loads(summary_path.read_text(encoding="utf-8"))
         assert persisted_summary["number_of_trades"] == 3
+        assert "regime_summaries" in persisted_summary
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +409,7 @@ class TestRunEventBacktest:
     """Integration tests for run_event_backtest in the CLI script."""
 
     def test_event_mode_produces_reports(self, tmp_path: Path) -> None:
-        """run_event_backtest should write trades and summary to disk."""
+        """run_event_backtest should write trades, equity curve, and summary to disk."""
         rl = _load_script_module()
         closes = [100.0] * 30 + [130.0] * 15 + [90.0] * 25
         base_ts = datetime.datetime(2024, 1, 2, 9, 15, 0)
@@ -339,6 +427,7 @@ class TestRunEventBacktest:
         )
         data_path = tmp_path / "input.parquet"
         trades_path = tmp_path / "trades.csv"
+        equity_path = tmp_path / "equity_curve.csv"
         summary_path = tmp_path / "summary.json"
         df.write_parquet(data_path)
 
@@ -350,9 +439,12 @@ class TestRunEventBacktest:
         )
 
         assert trades_path.exists()
+        assert equity_path.exists()
         assert summary_path.exists()
         assert trades.height >= 1
         assert metrics["number_of_trades"] >= 1
+        assert "trend_regime" in trades.columns
+        assert "volatility_regime" in trades.columns
 
     def test_fixed_bars_mode_produces_reports(self, tmp_path: Path) -> None:
         """run_event_backtest with fixed_bars should produce valid reports."""
@@ -373,6 +465,7 @@ class TestRunEventBacktest:
         )
         data_path = tmp_path / "input.parquet"
         trades_path = tmp_path / "trades.csv"
+        equity_path = tmp_path / "equity_curve.csv"
         summary_path = tmp_path / "summary.json"
         df.write_parquet(data_path)
 
@@ -385,6 +478,7 @@ class TestRunEventBacktest:
         )
 
         assert trades_path.exists()
+        assert equity_path.exists()
         assert metrics["number_of_trades"] >= 0
 
     def test_forward_return_mode_still_works(self, tmp_path: Path) -> None:

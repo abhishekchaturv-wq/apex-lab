@@ -24,6 +24,8 @@ DEFAULT_CSV_OUTPUT = Path("reports/lab/csv/ema_cross_returns.csv")
 DEFAULT_JSON_OUTPUT = Path("reports/lab/json/ema_cross_summary.json")
 FORWARD_RETURN_HORIZONS: tuple[int, ...] = (1, 3, 5, 10, 20)
 REQUIRED_COLUMNS: tuple[str, ...] = ("timestamp", "open", "high", "low", "close", "volume")
+ATR_PERIOD = 14
+ATR_PERCENTILE_WINDOW = 100
 
 logger = logging.getLogger(__name__)
 
@@ -98,13 +100,30 @@ def load_ohlcv(path: Path) -> pl.DataFrame:
 
 def compute_ema_signals(df: pl.DataFrame) -> pl.DataFrame:
     """Append EMA values, crossover signals, and forward-return columns."""
+    epsilon = pl.lit(1e-9)
+    prev_close = pl.col("close").shift(1)
+    true_range = (
+        pl.max_horizontal(
+            [
+                pl.col("high") - pl.col("low"),
+                (pl.col("high") - prev_close).abs(),
+                (pl.col("low") - prev_close).abs(),
+            ]
+        )
+        .cast(pl.Float64)
+        .alias("_tr")
+    )
+
     enriched = df.with_columns(
         [
             pl.col("close").ewm_mean(span=20, adjust=False).alias("ema_20"),
             pl.col("close").ewm_mean(span=50, adjust=False).alias("ema_50"),
+            pl.col("close").ewm_mean(span=200, adjust=False).alias("ema_200"),
+            true_range,
         ]
     ).with_columns(
         [
+            pl.col("_tr").rolling_mean(window_size=ATR_PERIOD).alias("atr_14"),
             (
                 (pl.col("ema_20") > pl.col("ema_50"))
                 & (pl.col("ema_20").shift(1) <= pl.col("ema_50").shift(1))
@@ -118,6 +137,16 @@ def compute_ema_signals(df: pl.DataFrame) -> pl.DataFrame:
             .fill_null(False)
             .alias("bearish_crossover"),
         ]
+    ).with_columns(
+        [
+            pl.col("atr_14")
+            .map_batches(
+                lambda series: _rolling_percentile_rank(series, ATR_PERCENTILE_WINDOW),
+                return_dtype=pl.Float64,
+            )
+            .alias("atr_pct"),
+            (pl.col("atr_14") / (pl.col("close") + epsilon) * 100.0).alias("atr_norm"),
+        ]
     )
 
     forward_return_columns = [
@@ -126,7 +155,27 @@ def compute_ema_signals(df: pl.DataFrame) -> pl.DataFrame:
         .alias(f"forward_return_{horizon}")
         for horizon in FORWARD_RETURN_HORIZONS
     ]
-    return enriched.with_columns(forward_return_columns)
+    return enriched.with_columns(forward_return_columns).drop("_tr")
+
+
+def _rolling_percentile_rank(series: pl.Series, window: int) -> pl.Series:
+    """Compute the rolling percentile rank (0–100) of *series*."""
+    values = series.to_list()
+    out: list[float | None] = [None] * len(values)
+
+    for index, current in enumerate(values):
+        if current is None:
+            continue
+
+        start = max(0, index - window + 1)
+        history = [value for value in values[start : index + 1] if value is not None]
+        if not history:
+            continue
+
+        less_or_equal = sum(1 for value in history if value <= current)
+        out[index] = less_or_equal / len(history) * 100.0
+
+    return pl.Series(out, dtype=pl.Float64)
 
 
 def build_bullish_returns_report(df: pl.DataFrame) -> pl.DataFrame:
