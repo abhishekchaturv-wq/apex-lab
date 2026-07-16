@@ -21,7 +21,11 @@ from apex_lab.data import (  # noqa: E402
     update_symbol,
 )
 from apex_lab.data.downloader import VALID_INTERVALS  # noqa: E402
-from apex_lab.data.storage import get_instruments_path, get_metadata_path, get_raw_path  # noqa: E402
+from apex_lab.data.storage import (  # noqa: E402
+    get_instruments_path,
+    get_metadata_path,
+    get_raw_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     download_parser = subparsers.add_parser(
         "download",
+        description="Download full historical data for a symbol.",
         help="Download full historical data for a symbol.",
         parents=[shared],
     )
@@ -81,6 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     update_parser = subparsers.add_parser(
         "update",
+        description="Download only missing data for a symbol.",
         help="Download only missing data for a symbol.",
         parents=[shared],
     )
@@ -94,6 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser(
         "refresh-instruments",
+        description="Refresh the instrument master file.",
         help="Refresh the instrument master file.",
         parents=[shared],
     )
