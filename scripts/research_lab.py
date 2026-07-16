@@ -3,20 +3,25 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import logging
+from collections import deque
 from pathlib import Path
 from typing import Any
 
 import polars as pl
 
 from apex_lab.research.backtest.backtester import (
-    DEFAULT_SUMMARY_OUTPUT as DEFAULT_BACKTEST_SUMMARY_OUTPUT,
+    DEFAULT_EQUITY_CURVE_OUTPUT,
     DEFAULT_TRADES_OUTPUT,
     ExitMode,
     compute_metrics,
     run_backtest,
     write_backtest_reports,
+)
+from apex_lab.research.backtest.backtester import (
+    DEFAULT_SUMMARY_OUTPUT as DEFAULT_BACKTEST_SUMMARY_OUTPUT,
 )
 
 DEFAULT_DATA_PATH = Path("data/raw/30minute/NIFTY BANK.parquet")
@@ -24,6 +29,8 @@ DEFAULT_CSV_OUTPUT = Path("reports/lab/csv/ema_cross_returns.csv")
 DEFAULT_JSON_OUTPUT = Path("reports/lab/json/ema_cross_summary.json")
 FORWARD_RETURN_HORIZONS: tuple[int, ...] = (1, 3, 5, 10, 20)
 REQUIRED_COLUMNS: tuple[str, ...] = ("timestamp", "open", "high", "low", "close", "volume")
+ATR_PERIOD = 14
+ATR_PERCENTILE_WINDOW = 100
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +83,12 @@ def parse_args() -> argparse.Namespace:
         help="Path for the backtest trades CSV.",
     )
     parser.add_argument(
+        "--equity-curve-output",
+        type=Path,
+        default=DEFAULT_EQUITY_CURVE_OUTPUT,
+        help="Path for the backtest equity curve CSV.",
+    )
+    parser.add_argument(
         "--backtest-summary-output",
         type=Path,
         default=DEFAULT_BACKTEST_SUMMARY_OUTPUT,
@@ -98,13 +111,30 @@ def load_ohlcv(path: Path) -> pl.DataFrame:
 
 def compute_ema_signals(df: pl.DataFrame) -> pl.DataFrame:
     """Append EMA values, crossover signals, and forward-return columns."""
+    epsilon = pl.lit(1e-9)
+    prev_close = pl.col("close").shift(1)
+    true_range = (
+        pl.max_horizontal(
+            [
+                pl.col("high") - pl.col("low"),
+                (pl.col("high") - prev_close).abs(),
+                (pl.col("low") - prev_close).abs(),
+            ]
+        )
+        .cast(pl.Float64)
+        .alias("_tr")
+    )
+
     enriched = df.with_columns(
         [
             pl.col("close").ewm_mean(span=20, adjust=False).alias("ema_20"),
             pl.col("close").ewm_mean(span=50, adjust=False).alias("ema_50"),
+            pl.col("close").ewm_mean(span=200, adjust=False).alias("ema_200"),
+            true_range,
         ]
     ).with_columns(
         [
+            pl.col("_tr").rolling_mean(window_size=ATR_PERIOD).alias("atr_14"),
             (
                 (pl.col("ema_20") > pl.col("ema_50"))
                 & (pl.col("ema_20").shift(1) <= pl.col("ema_50").shift(1))
@@ -120,13 +150,54 @@ def compute_ema_signals(df: pl.DataFrame) -> pl.DataFrame:
         ]
     )
 
+    atr_pct = _rolling_percentile_rank(enriched.get_column("atr_14"), ATR_PERCENTILE_WINDOW)
+    enriched = enriched.with_columns(
+        [
+            atr_pct.alias("atr_pct"),
+            (pl.col("atr_14") / (pl.col("close") + epsilon) * 100.0).alias("atr_norm"),
+        ]
+    )
+
     forward_return_columns = [
         ((pl.col("close").shift(-horizon) / pl.col("close")) - 1.0)
         .mul(100.0)
         .alias(f"forward_return_{horizon}")
         for horizon in FORWARD_RETURN_HORIZONS
     ]
-    return enriched.with_columns(forward_return_columns)
+    return enriched.with_columns(forward_return_columns).drop("_tr")
+
+
+def _rolling_percentile_rank(series: pl.Series, window: int) -> pl.Series:
+    """Compute the rolling percentile rank (0–100) of *series*.
+
+    Null input values remain null in the output. The rolling window tracks the
+    most recent non-null values up to *window* entries.
+    """
+    values = series.to_list()
+    out: list[float | None] = [None] * len(values)
+    active_window: deque[float] = deque()
+    sorted_window: list[float] = []
+
+    for index, current in enumerate(values):
+        if current is not None:
+            # The configured ATR percentile window is small (100 bars) and bounded, so
+            # maintaining a sorted in-memory window keeps the implementation simple.
+            bisect.insort(sorted_window, current)
+            active_window.append(current)
+
+        if len(active_window) > window:
+            # Keep exactly the most recent ``window`` non-null values.
+            expired = active_window.popleft()
+            expired_index = bisect.bisect_left(sorted_window, expired)
+            del sorted_window[expired_index]
+
+        if current is None or not sorted_window:
+            continue
+
+        rank_position = bisect.bisect_right(sorted_window, current)
+        out[index] = rank_position / len(sorted_window) * 100.0
+
+    return pl.Series(out, dtype=pl.Float64)
 
 
 def build_bullish_returns_report(df: pl.DataFrame) -> pl.DataFrame:
@@ -228,6 +299,7 @@ def run_event_backtest(
     fixed_bars: int = 10,
     trades_output: Path = DEFAULT_TRADES_OUTPUT,
     summary_output: Path = DEFAULT_BACKTEST_SUMMARY_OUTPUT,
+    equity_curve_output: Path | None = None,
 ) -> tuple[pl.DataFrame, dict[str, Any]]:
     """Run the event-driven EMA crossover backtest and write reports to disk.
 
@@ -237,6 +309,8 @@ def run_event_backtest(
         fixed_bars: Bars to hold when exit_mode is fixed_bars.
         trades_output: Destination path for trades CSV.
         summary_output: Destination path for summary JSON.
+        equity_curve_output: Destination path for the equity curve CSV.  If
+            omitted, writes ``equity_curve.csv`` alongside *trades_output*.
 
     Returns:
         A tuple of (trades DataFrame, metrics dictionary).
@@ -245,7 +319,7 @@ def run_event_backtest(
     enriched = compute_ema_signals(df)
     trades = run_backtest(enriched, exit_mode=exit_mode, fixed_bars=fixed_bars)
     metrics = compute_metrics(trades)
-    write_backtest_reports(trades, metrics, trades_output, summary_output)
+    write_backtest_reports(trades, metrics, trades_output, summary_output, equity_curve_output)
     return trades, metrics
 
 
@@ -261,6 +335,7 @@ def main() -> None:
             fixed_bars=args.bars,
             trades_output=args.trades_output,
             summary_output=args.backtest_summary_output,
+            equity_curve_output=args.equity_curve_output,
         )
         logger.info(
             "Backtest complete: %d trades, win_rate=%.1f%%, expectancy=%.4f",
