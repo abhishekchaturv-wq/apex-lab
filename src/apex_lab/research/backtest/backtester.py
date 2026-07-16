@@ -25,6 +25,7 @@ DEFAULT_TRADES_OUTPUT = Path("reports/lab/backtest/trades.csv")
 DEFAULT_SUMMARY_OUTPUT = Path("reports/lab/backtest/summary.json")
 DEFAULT_EQUITY_CURVE_FILENAME = "equity_curve.csv"
 DEFAULT_EQUITY_CURVE_OUTPUT = Path("reports/lab/backtest/equity_curve.csv")
+# Trades entered when ATR percentile rank >= 50 (above median) are labelled "high" volatility.
 VOLATILITY_HIGH_THRESHOLD = 50.0
 REGIME_SUMMARY_COLUMNS: tuple[str, ...] = ("trend_regime", "volatility_regime")
 
@@ -76,7 +77,7 @@ def run_backtest(
 
     if exit_mode not in ("opposite_crossover", "fixed_bars"):
         raise ValueError(
-            f"Unknown exit_mode '{exit_mode}'. " "Expected 'opposite_crossover' or 'fixed_bars'."
+            f"Unknown exit_mode '{exit_mode}'. Expected 'opposite_crossover' or 'fixed_bars'."
         )
 
     timestamps = df["timestamp"].to_list()
@@ -293,7 +294,7 @@ def _build_regime_summaries(trades: pl.DataFrame) -> dict[str, dict[str, Any]]:
             wins = returns.filter(returns > 0)
             losses = returns.filter(returns <= 0)
             trade_count = subset.height
-            win_rate = len(wins) / trade_count if trade_count > 0 else None
+            win_rate = wins.len() / trade_count if trade_count > 0 else None
             gross_wins = float(wins.sum()) if wins.len() > 0 else 0.0
             gross_losses = abs(float(losses.sum())) if losses.len() > 0 else 0.0
             profit_factor = gross_wins / gross_losses if gross_losses > 0 else None
