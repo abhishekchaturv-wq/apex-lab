@@ -20,6 +20,7 @@ from apex_lab.research.signal_discovery.importance import (
 )
 from apex_lab.research.signal_discovery.report import build_summary_payload, write_reports
 from apex_lab.research.signal_discovery.statistics import (
+    EPSILON,
     correlation,
     normalize_series,
     stability_label,
@@ -42,7 +43,7 @@ class SignalDiscoveryResult:
 def run_signal_discovery(
     dataset_paths: list[Path] | Path,
     output_dir: Path = DEFAULT_OUTPUT_DIR,
-    combination_config: CombinationConfig = CombinationConfig(),
+    combination_config: CombinationConfig | None = None,
 ) -> SignalDiscoveryResult:
     """Run feature importance and signal discovery analysis."""
     paths = dataset_paths if isinstance(dataset_paths, list) else [dataset_paths]
@@ -64,7 +65,7 @@ def run_signal_discovery(
     top_combinations = rank_feature_combinations(
         dataset,
         feature_importance,
-        config=combination_config,
+        config=combination_config or CombinationConfig(),
     )
     stability_report = _build_stability_report(dataset, feature_importance)
     summary = build_summary_payload(
@@ -100,7 +101,6 @@ def _resolve_feature_columns(df: pl.DataFrame) -> list[str]:
         "weekday",
         "trend_regime",
         "volatility_regime",
-        "market_regime",
         "open",
         "high",
         "low",
@@ -159,7 +159,7 @@ def _build_stability_report(df: pl.DataFrame, importance: pl.DataFrame, top_n: i
         else:
             mean = float(np.mean(per_symbol_strength))
             std = float(np.std(per_symbol_strength))
-            cv = std / max(mean, 1e-9)
+            cv = std / max(mean, EPSILON)
             score = max(0.0, min(1.0, 1.0 - cv))
 
         rows.append(

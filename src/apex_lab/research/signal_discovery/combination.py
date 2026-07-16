@@ -14,6 +14,14 @@ from apex_lab.research.signal_discovery.statistics import (
     predictive_power,
 )
 
+_PREDICTIVE_WEIGHT = 0.40
+_EXPECTANCY_WEIGHT = 0.30
+_WIN_RATE_WEIGHT = 0.20
+_FREQUENCY_WEIGHT = 0.10
+# Internal join key stays compact ("|"), report rendering stays human-readable.
+_BUCKET_SEPARATOR = "|"
+_DISPLAY_BUCKET_SEPARATOR = " | "
+
 
 @dataclass(frozen=True)
 class CombinationConfig:
@@ -26,10 +34,11 @@ class CombinationConfig:
 def rank_feature_combinations(
     df: pl.DataFrame,
     importance: pl.DataFrame,
-    config: CombinationConfig = CombinationConfig(),
+    config: CombinationConfig | None = None,
     target_column: str = "future_return_20",
 ) -> pl.DataFrame:
     """Evaluate top 2- and 3-feature combinations using strongest features only."""
+    active_config = config or CombinationConfig()
     if importance.is_empty() or target_column not in df.columns:
         return pl.DataFrame(
             {
@@ -48,7 +57,7 @@ def rank_feature_combinations(
 
     candidates = (
         importance.select("feature")
-        .head(config.top_feature_candidates)
+        .head(active_config.top_feature_candidates)
         .get_column("feature")
         .to_list()
     )
@@ -104,9 +113,13 @@ def rank_feature_combinations(
                 continue
 
             best = grouped.row(0, named=True)
-            best_bucket = " | ".join(str(best[column]) for column in bucket_columns)
+            best_bucket = _DISPLAY_BUCKET_SEPARATOR.join(str(best[column]) for column in bucket_columns)
             scoped_with_key = scoped.with_columns(
-                pl.concat_str([pl.col(column) for column in bucket_columns], separator="|", ignore_nulls=False)
+                pl.concat_str(
+                    [pl.col(column) for column in bucket_columns],
+                    separator=_BUCKET_SEPARATOR,
+                    ignore_nulls=False,
+                )
                 .fill_null("null")
                 .alias("combo_key")
             )
@@ -160,16 +173,16 @@ def rank_feature_combinations(
         ]
     ).with_columns(
         (
-            (pl.col("_predictive_norm") * 0.40)
-            + (pl.col("_expectancy_norm") * 0.30)
-            + (pl.col("_win_rate_norm") * 0.20)
-            + (pl.col("_frequency_norm") * 0.10)
+            (pl.col("_predictive_norm") * _PREDICTIVE_WEIGHT)
+            + (pl.col("_expectancy_norm") * _EXPECTANCY_WEIGHT)
+            + (pl.col("_win_rate_norm") * _WIN_RATE_WEIGHT)
+            + (pl.col("_frequency_norm") * _FREQUENCY_WEIGHT)
         ).alias("combination_score")
     )
 
     return (
         ranked.sort("combination_score", descending=True)
-        .head(config.top_combinations)
+        .head(active_config.top_combinations)
         .with_row_index("rank", offset=1)
         .select(
             [

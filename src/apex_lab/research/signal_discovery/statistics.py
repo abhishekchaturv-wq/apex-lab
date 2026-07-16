@@ -4,19 +4,31 @@ from __future__ import annotations
 
 import math
 from collections import Counter
-from typing import Iterable
+from collections.abc import Iterable
 
 import numpy as np
 import polars as pl
 from scipy.stats import pearsonr, spearmanr
 from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 
-_EPSILON = 1e-12
+# Numerical guardrail used to avoid divide-by-zero/zero-variance instability.
+EPSILON = 1e-12
 
 
 def normalize_series(values: list[float | None]) -> list[float]:
     """Min-max normalize numeric values; nulls become 0."""
-    clean = [float(value) for value in values if value is not None and math.isfinite(float(value))]
+    converted: list[float | None] = []
+    clean: list[float] = []
+    for value in values:
+        if value is None:
+            converted.append(None)
+            continue
+        converted_value = float(value)
+        if math.isfinite(converted_value):
+            converted.append(converted_value)
+            clean.append(converted_value)
+        else:
+            converted.append(None)
     if not clean:
         return [0.0 for _ in values]
     minimum = min(clean)
@@ -24,12 +36,7 @@ def normalize_series(values: list[float | None]) -> list[float]:
     span = maximum - minimum
     if span <= 0:
         return [0.0 for _ in values]
-    return [
-        0.0
-        if value is None or not math.isfinite(float(value))
-        else (float(value) - minimum) / span
-        for value in values
-    ]
+    return [0.0 if value is None else (value - minimum) / span for value in converted]
 
 
 def entropy(values: Iterable[str]) -> float:
@@ -162,7 +169,7 @@ def correlation(feature: pl.Series, target: pl.Series, method: str) -> float | N
 
     x_valid = x[mask]
     y_valid = y[mask]
-    if np.std(x_valid) <= _EPSILON or np.std(y_valid) <= _EPSILON:
+    if np.std(x_valid) <= EPSILON or np.std(y_valid) <= EPSILON:
         return 0.0
 
     if method == "pearson":
@@ -183,9 +190,14 @@ def predictive_power(feature: pl.Series, target: pl.Series, *, categorical_featu
     if pair.height < 3:
         return None
 
-    target_values = np.array(pair.get_column("target").to_list(), dtype=np.float64)
+    target_series = pair.get_column("target")
+    if target_series.dtype.is_numeric():
+        target_values = np.array(target_series.to_list(), dtype=np.float64)
+    else:
+        _, encoded = np.unique(target_series.cast(pl.Utf8, strict=False).to_numpy(), return_inverse=True)
+        target_values = encoded.astype(np.float64)
     total_var = float(np.var(target_values))
-    if total_var <= _EPSILON:
+    if total_var <= EPSILON:
         return 0.0
 
     if categorical_feature:

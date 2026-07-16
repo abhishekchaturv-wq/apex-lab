@@ -57,6 +57,13 @@ _CATEGORICAL_HINTS = (
     "or_",
     "gap",
 )
+# Composite feature-importance weighting: information and predictive power are
+# prioritized, with consistency/robustness as secondary tie-breakers.
+_MI_WEIGHT = 0.30
+_CORR_WEIGHT = 0.20
+_PREDICTIVE_WEIGHT = 0.25
+_CONSISTENCY_WEIGHT = 0.15
+_ROBUSTNESS_WEIGHT = 0.10
 
 
 def is_categorical_feature(series: pl.Series, name: str) -> bool:
@@ -150,14 +157,11 @@ def analyze_feature_importance(
 
     mi_norm = normalize_series(importance.get_column("mutual_information").to_list())
     corr_norm = normalize_series(
-        [
-            (
-                (row["pearson"] if row["pearson"] is not None else 0.0)
-                + (row["spearman"] if row["spearman"] is not None else 0.0)
-            )
-            / 2.0
-            for row in importance.to_dicts()
-        ]
+        importance.select(
+            ((pl.col("pearson").fill_null(0.0) + pl.col("spearman").fill_null(0.0)) / 2.0).alias("corr_avg")
+        )
+        .get_column("corr_avg")
+        .to_list()
     )
     predictive_norm = normalize_series(importance.get_column("predictive_power").to_list())
     consistency_norm = normalize_series(importance.get_column("consistency").to_list())
@@ -173,11 +177,11 @@ def analyze_feature_importance(
         ]
     ).with_columns(
         (
-            (pl.col("mi_score") * 0.30)
-            + (pl.col("corr_score") * 0.20)
-            + (pl.col("predictive_score") * 0.25)
-            + (pl.col("consistency_score") * 0.15)
-            + (pl.col("robustness_score") * 0.10)
+            (pl.col("mi_score") * _MI_WEIGHT)
+            + (pl.col("corr_score") * _CORR_WEIGHT)
+            + (pl.col("predictive_score") * _PREDICTIVE_WEIGHT)
+            + (pl.col("consistency_score") * _CONSISTENCY_WEIGHT)
+            + (pl.col("robustness_score") * _ROBUSTNESS_WEIGHT)
         ).alias("composite_score")
     )
 

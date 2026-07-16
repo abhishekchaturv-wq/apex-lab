@@ -303,7 +303,7 @@ def parse_args() -> argparse.Namespace:
         "--dataset",
         type=Path,
         default=None,
-        help="Path to signal dataset parquet for signal_discovery mode.",
+        help="Path to signal dataset parquet for signal_discovery mode (overrides --data).",
     )
     parser.add_argument(
         "--symbol",
