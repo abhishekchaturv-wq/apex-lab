@@ -359,7 +359,7 @@ class TestCompositeScore:
         ]
         df = self._make_metrics_df(rows)
         scores = _compute_composite_scores(df)
-        # Single row: non-drawdown metrics normalise to 1.0, drawdown inverts to 0.0.
+        # Single row: non-drawdown metrics normalize to 1.0, drawdown inverts to 0.0.
         # composite = 0.25 + 0.25 + 0.20 + 0.0 + 0.15 = 0.85
         assert len(scores) == 1
         assert 0.0 <= scores[0] <= 1.0

@@ -18,6 +18,7 @@ Example::
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
 from typing import Any
 
@@ -224,7 +225,7 @@ def _compute_composite_scores(metrics_df: pl.DataFrame) -> list[float]:
         values = [v if v is not None else float("nan") for v in col.to_list()]
 
         # Replace NaN with 0.0 for normalisation
-        finite = [v for v in values if v == v]  # filter NaN
+        finite = [v for v in values if not math.isnan(v)]
         if not finite:
             continue
 
@@ -233,7 +234,7 @@ def _compute_composite_scores(metrics_df: pl.DataFrame) -> list[float]:
         span = col_max - col_min
 
         for i, v in enumerate(values):
-            raw = v if v == v else 0.0  # NaN → 0
+            raw = 0.0 if math.isnan(v) else v  # NaN → 0
             if span > 0.0:
                 normalised = (raw - col_min) / span
             else:

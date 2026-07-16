@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -82,7 +83,7 @@ def _write_json(data: dict[str, Any], path: Path) -> None:
 
 def _json_default(obj: object) -> object:
     """Fallback JSON serialiser for types not natively handled by ``json``."""
-    if isinstance(obj, float) and (obj != obj):  # NaN check
+    if isinstance(obj, float) and math.isnan(obj):
         return None
     raise TypeError(f"Object of type {type(obj)} is not JSON serialisable")
 
@@ -113,7 +114,7 @@ def _build_top_strategy(leaderboard: pl.DataFrame) -> dict[str, Any]:
     # Convert all values to JSON-serialisable types
     result: dict[str, Any] = {}
     for key, value in top_row.items():
-        if isinstance(value, float) and value != value:
+        if isinstance(value, float) and math.isnan(value):
             result[key] = None
         elif hasattr(value, "item"):
             result[key] = value.item()
