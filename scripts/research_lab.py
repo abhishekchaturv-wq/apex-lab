@@ -12,6 +12,8 @@ import polars as pl
 
 from apex_lab.research.backtest.backtester import (
     DEFAULT_SUMMARY_OUTPUT as DEFAULT_BACKTEST_SUMMARY_OUTPUT,
+)
+from apex_lab.research.backtest.backtester import (
     DEFAULT_TRADES_OUTPUT,
     ExitMode,
     compute_metrics,
