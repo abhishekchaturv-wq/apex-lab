@@ -1,0 +1,242 @@
+"""Generic factor combination research engine.
+
+Evaluates every supported factor combination using boolean AND logic and
+backtests each combined signal with the existing event-driven backtester.
+Results are exported to ``reports/lab/factors/``.
+
+Example::
+
+    import polars as pl
+    from apex_lab.research.factors.factor_engine import run_factor_research
+
+    df = pl.read_parquet("data/raw/30minute/NIFTY BANK.parquet")
+    leaderboard, summary = run_factor_research(df)
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any
+
+import polars as pl
+
+from apex_lab.research.backtest.backtester import compute_metrics, run_backtest
+from apex_lab.research.factors.atr_volatility import AtrVolatilityFactor
+from apex_lab.research.factors.base import Factor
+from apex_lab.research.factors.ema_trend import EmaTrendFactor
+from apex_lab.research.factors.macd import MacdFactor
+from apex_lab.research.factors.rsi import RsiFactor
+from apex_lab.research.factors.vwap import VwapFactor
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Registry and combination catalogue
+# ---------------------------------------------------------------------------
+
+#: All supported factor keys mapped to their default instances.
+FACTOR_REGISTRY: dict[str, Factor] = {
+    "EMA": EmaTrendFactor(),
+    "RSI": RsiFactor(),
+    "MACD": MacdFactor(),
+    "VWAP": VwapFactor(),
+    "ATR": AtrVolatilityFactor(),
+}
+
+#: Every combination that will be evaluated.  EMA must appear in all of them
+#: so that the backtester-required columns (``ema_200``, ``atr_pct``,
+#: ``bearish_crossover``) are always present in the enriched DataFrame.
+COMBINATIONS: tuple[tuple[str, ...], ...] = (
+    ("EMA", "RSI"),
+    ("EMA", "MACD"),
+    ("EMA", "VWAP"),
+    ("EMA", "ATR"),
+    ("EMA", "RSI", "MACD"),
+    ("EMA", "RSI", "VWAP"),
+    ("EMA", "RSI", "ATR"),
+    ("EMA", "MACD", "VWAP"),
+)
+
+#: Default output directory for factor research reports.
+DEFAULT_OUTPUT_DIR: Path = Path("reports/lab/factors")
+
+#: Default exit mode passed to the event-driven backtester.
+DEFAULT_EXIT_MODE = "fixed_bars"
+
+#: Default number of bars to hold when using the ``fixed_bars`` exit mode.
+DEFAULT_FIXED_BARS = 10
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def run_factor_research(
+    df: pl.DataFrame,
+    output_dir: Path = DEFAULT_OUTPUT_DIR,
+    fixed_bars: int = DEFAULT_FIXED_BARS,
+    combinations: tuple[tuple[str, ...], ...] = COMBINATIONS,
+    registry: dict[str, Factor] | None = None,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Run all factor-combination backtests and write output reports.
+
+    Args:
+        df: Raw OHLCV DataFrame (must have ``timestamp``, ``open``, ``high``,
+            ``low``, ``close``, ``volume`` columns, sorted by timestamp).
+        output_dir: Directory where ``leaderboard.csv`` and ``summary.csv``
+            will be written.
+        fixed_bars: Number of bars to hold before exiting each trade.
+        combinations: Sequence of factor-key tuples to evaluate.
+        registry: Optional factor registry override (for testing).
+
+    Returns:
+        A tuple ``(leaderboard, summary)`` where *leaderboard* has one row per
+        combination and *summary* has one row per trade across all combinations.
+    """
+    active_registry = registry if registry is not None else FACTOR_REGISTRY
+
+    leaderboard_rows: list[dict[str, Any]] = []
+    summary_rows: list[pl.DataFrame] = []
+
+    for combo in combinations:
+        combo_label = " AND ".join(combo)
+        logger.info("Evaluating combination: %s", combo_label)
+
+        enriched = _enrich_for_combination(df, combo, active_registry)
+        combined_signal = _compute_combined_signal(enriched, combo, active_registry)
+
+        backtest_df = enriched.with_columns(
+            [combined_signal.alias("bullish_crossover")]
+        )
+
+        trades = run_backtest(backtest_df, exit_mode="fixed_bars", fixed_bars=fixed_bars)
+        metrics = compute_metrics(trades)
+
+        leaderboard_rows.append(
+            {
+                "factor_combination": combo_label,
+                "number_of_trades": metrics["number_of_trades"],
+                "win_rate": metrics["win_rate"],
+                "expectancy": metrics["expectancy"],
+                "profit_factor": metrics["profit_factor"],
+                "maximum_drawdown": metrics["maximum_drawdown"],
+            }
+        )
+
+        if trades.height > 0:
+            trades_with_combo = trades.with_columns(
+                [pl.lit(combo_label).alias("factor_combination")]
+            )
+            summary_rows.append(trades_with_combo)
+
+        logger.info(
+            "  %s: %d trades, win_rate=%.1f%%, expectancy=%.4f",
+            combo_label,
+            metrics["number_of_trades"],
+            (metrics["win_rate"] or 0.0) * 100.0,
+            metrics["expectancy"] or 0.0,
+        )
+
+    leaderboard = _build_leaderboard(leaderboard_rows)
+    summary = _build_summary(summary_rows)
+
+    _write_reports(leaderboard, summary, output_dir)
+    return leaderboard, summary
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _enrich_for_combination(
+    df: pl.DataFrame,
+    combo: tuple[str, ...],
+    registry: dict[str, Factor],
+) -> pl.DataFrame:
+    """Apply each factor's ``compute`` in sequence, accumulating columns."""
+    enriched = df
+    for key in combo:
+        factor = registry[key]
+        enriched = factor.compute(enriched)
+    return enriched
+
+
+def _compute_combined_signal(
+    df: pl.DataFrame,
+    combo: tuple[str, ...],
+    registry: dict[str, Factor],
+) -> pl.Series:
+    """AND all factor signals together into a single boolean Series."""
+    signal: pl.Series | None = None
+    for key in combo:
+        factor_signal = registry[key].signal(df).fill_null(False)
+        signal = factor_signal if signal is None else (signal & factor_signal)
+    # signal cannot be None here because combinations always have ≥ 2 factors
+    assert signal is not None
+    return signal
+
+
+def _build_leaderboard(rows: list[dict[str, Any]]) -> pl.DataFrame:
+    """Build the leaderboard DataFrame from per-combination metric dicts."""
+    if not rows:
+        return pl.DataFrame(
+            {
+                "factor_combination": pl.Series([], dtype=pl.Utf8),
+                "number_of_trades": pl.Series([], dtype=pl.Int64),
+                "win_rate": pl.Series([], dtype=pl.Float64),
+                "expectancy": pl.Series([], dtype=pl.Float64),
+                "profit_factor": pl.Series([], dtype=pl.Float64),
+                "maximum_drawdown": pl.Series([], dtype=pl.Float64),
+            }
+        )
+    return pl.DataFrame(rows).select(
+        [
+            "factor_combination",
+            "number_of_trades",
+            "win_rate",
+            "expectancy",
+            "profit_factor",
+            "maximum_drawdown",
+        ]
+    )
+
+
+def _build_summary(trade_frames: list[pl.DataFrame]) -> pl.DataFrame:
+    """Concatenate per-combination trade logs into a single summary DataFrame."""
+    if not trade_frames:
+        return pl.DataFrame(
+            {
+                "factor_combination": pl.Series([], dtype=pl.Utf8),
+                "entry_time": pl.Series([], dtype=pl.Datetime),
+                "exit_time": pl.Series([], dtype=pl.Datetime),
+                "entry_price": pl.Series([], dtype=pl.Float64),
+                "exit_price": pl.Series([], dtype=pl.Float64),
+                "bars_held": pl.Series([], dtype=pl.Int64),
+                "return_pct": pl.Series([], dtype=pl.Float64),
+                "exit_reason": pl.Series([], dtype=pl.Utf8),
+                "trend_regime": pl.Series([], dtype=pl.Utf8),
+                "volatility_regime": pl.Series([], dtype=pl.Utf8),
+            }
+        )
+    combined = pl.concat(trade_frames, how="diagonal_relaxed")
+    # Reorder so factor_combination is the first column
+    cols = ["factor_combination"] + [c for c in combined.columns if c != "factor_combination"]
+    return combined.select(cols)
+
+
+def _write_reports(
+    leaderboard: pl.DataFrame,
+    summary: pl.DataFrame,
+    output_dir: Path,
+) -> None:
+    """Persist leaderboard and summary CSVs to *output_dir*."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    leaderboard_path = output_dir / "leaderboard.csv"
+    summary_path = output_dir / "summary.csv"
+    leaderboard.write_csv(leaderboard_path)
+    summary.write_csv(summary_path)
+    logger.info("Leaderboard written to %s (%d rows)", leaderboard_path, leaderboard.height)
+    logger.info("Summary written to %s (%d rows)", summary_path, summary.height)
