@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from pydantic import AliasChoices, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -22,21 +23,33 @@ class Settings(BaseSettings):
         kite_api_key: Zerodha Kite API key
         kite_api_secret: Zerodha Kite API secret
         kite_access_token: Zerodha Kite access token (obtained after login)
-        data_dir: Root directory for all data storage
+        data_dir: Root directory for all data storage.  Reads
+            ``APEX_DATA_DIR`` or ``DATA_DIR`` from the environment;
+            defaults to ``~/kite-test/apex-data-lake``.
         cache_dir: Directory for temporary caches
         log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         timezone: Timezone for timestamp handling (e.g., 'Asia/Kolkata')
         default_interval: Default candle interval for data fetch (e.g., '5m', '15m')
     """
 
+    model_config = ConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        populate_by_name=True,
+    )
+
     # Zerodha Kite Connect
     kite_api_key: str
     kite_api_secret: str
     kite_access_token: str = ""
 
-    # Data Storage
-    data_dir: Path = Path("./data")
-    cache_dir: Path = Path("./data/cache")
+    # Data Storage — reads APEX_DATA_DIR or DATA_DIR from environment
+    data_dir: Path = Field(
+        default=Path("~/kite-test/apex-data-lake"),
+        validation_alias=AliasChoices("apex_data_dir", "data_dir"),
+    )
+    cache_dir: Path | None = None
 
     # Logging
     log_level: str = "INFO"
@@ -45,14 +58,22 @@ class Settings(BaseSettings):
     timezone: str = "Asia/Kolkata"
     default_interval: str = "5m"
 
-    class Config:
-        """Pydantic config."""
+    @field_validator("data_dir", "cache_dir", mode="before")
+    @classmethod
+    def expand_user(cls, v: Any) -> Path | None:
+        """Expand ``~`` in directory paths."""
+        if v is None:
+            return None
+        return Path(v).expanduser()
 
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
+    @model_validator(mode="after")
+    def _set_cache_default(self) -> Settings:
+        """Derive ``cache_dir`` from ``data_dir`` when not explicitly set."""
+        if self.cache_dir is None:
+            self.cache_dir = self.data_dir / "cache"
+        return self
 
-    def __init__(self, **data):
+    def __init__(self, **data: Any) -> None:
         """Initialize settings and create required directories."""
         super().__init__(**data)
         # Ensure data directories exist

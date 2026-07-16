@@ -31,6 +31,7 @@ Update only missing candles for a symbol::
 
 from __future__ import annotations
 
+import os
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,42 @@ __all__ = [
     "refresh_instruments",
 ]
 
+# ---------------------------------------------------------------------------
+# Data root resolution
+# ---------------------------------------------------------------------------
+
+#: Environment variable name for overriding the data root directory.
+_APEX_DATA_DIR_ENV: str = "APEX_DATA_DIR"
+
+#: Default external data lake location when no override is configured.
+_DEFAULT_DATA_LAKE: Path = Path("~/kite-test/apex-data-lake")
+
+
+def _resolve_data_dir(explicit: Path | None = None) -> Path:
+    """Resolve the data root directory using the configured priority order.
+
+    Priority:
+
+    1. *explicit* — value passed directly by the caller.
+    2. ``APEX_DATA_DIR`` environment variable.
+    3. ``~/kite-test/apex-data-lake`` (default external data lake).
+
+    ``~`` is expanded via :func:`pathlib.Path.expanduser` in all cases.
+
+    Args:
+        explicit: Directory explicitly supplied by the caller.  ``None``
+            triggers fall-through to the environment variable or default.
+
+    Returns:
+        Resolved :class:`~pathlib.Path` to the data root.
+    """
+    if explicit is not None:
+        return explicit.expanduser()
+    env_val = os.environ.get(_APEX_DATA_DIR_ENV)
+    if env_val:
+        return Path(env_val).expanduser()
+    return _DEFAULT_DATA_LAKE.expanduser()
+
 
 # ---------------------------------------------------------------------------
 # Internal factory
@@ -63,15 +100,13 @@ def _create_engine(
     Args:
         kite: Optional authenticated :class:`kiteconnect.KiteConnect` instance.
             If ``None`` a new instance is created from settings.
-        data_dir: Optional data root directory.  Uses ``settings.data_dir``
-            when ``None``.
+        data_dir: Optional data root directory.  Resolved via
+            :func:`_resolve_data_dir` when ``None``.
 
     Returns:
         Configured :class:`DataEngine` instance.
     """
-    from apex_lab.config import settings  # noqa: PLC0415
-
-    resolved_dir = data_dir or settings.data_dir
+    resolved_dir = _resolve_data_dir(data_dir)
     resolved_kite = kite if kite is not None else _kite_from_settings()
     return DataEngine(resolved_kite, resolved_dir)
 
