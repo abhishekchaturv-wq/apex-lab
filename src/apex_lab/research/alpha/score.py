@@ -16,7 +16,9 @@ def score_trades(trade_contexts: pl.DataFrame, weights: list[FeatureWeight]) -> 
         ctx_col = f"ctx_{weight.feature}"
         if ctx_col not in trade_contexts.columns:
             continue
-        category_exprs.setdefault(weight.category, []).append(
+        if weight.category not in category_exprs:
+            category_exprs[weight.category] = []
+        category_exprs[weight.category].append(
             pl.when(pl.col(ctx_col) == pl.lit(weight.bucket))
             .then(pl.lit(weight.weight))
             .otherwise(pl.lit(0.0))

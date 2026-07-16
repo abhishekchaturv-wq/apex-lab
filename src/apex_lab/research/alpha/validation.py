@@ -27,7 +27,8 @@ def build_score_validation(scored_trades: pl.DataFrame, score_analysis: pl.DataF
     monotonicity = True
     if len(non_null_expectancy) >= 2:
         monotonicity = all(
-            right >= left for left, right in zip(non_null_expectancy, non_null_expectancy[1:], strict=False)
+            right >= left
+            for left, right in zip(non_null_expectancy, non_null_expectancy[1:], strict=False)
         )
 
     highest_bucket_expectancy = expectancy_by_bucket.get("80-100")

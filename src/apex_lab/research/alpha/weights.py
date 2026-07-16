@@ -82,7 +82,7 @@ def load_weights_file(weights_path: Path) -> list[FeatureWeight]:
             bucket=str(row["bucket"]),
             category=str(row["category"]),
             weight=float(row["weight"]),
-            source_score=(float(row["source_score"]) if row.get("source_score") is not None else None),
+            source_score=float(row["source_score"]) if row.get("source_score") is not None else None,
         )
         for row in rows
     ]
@@ -143,7 +143,7 @@ def _normalize_weights(weights: list[FeatureWeight]) -> list[FeatureWeight]:
         feature=last.feature,
         bucket=last.bucket,
         category=last.category,
-        weight=round(max(last.weight + adjustment, 0.0), 6),
+        weight=round(last.weight + adjustment, 6),
         source_score=last.source_score,
     )
     return normalized
