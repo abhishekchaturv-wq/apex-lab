@@ -1,0 +1,16 @@
+{
+  "initial_capital": 25000.0,
+  "ending_capital": 687564.8221,
+  "total_return_pct": 2650.2593,
+  "cagr": 4868.773,
+  "maximum_drawdown": 0.0,
+  "sharpe_ratio": 67.9717,
+  "sortino_ratio": null,
+  "calmar_ratio": null,
+  "profit_factor": null,
+  "expectancy": 13803.4338,
+  "average_trade": 7.1516,
+  "largest_win": 8.5318,
+  "largest_loss": 4.3002,
+  "number_of_trades": 48
+}
