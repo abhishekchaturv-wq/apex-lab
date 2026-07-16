@@ -68,7 +68,7 @@ def compute_portfolio_metrics(
     ending_capital = float(equity_df["ending_equity"][-1])
     total_return_pct = (ending_capital / initial_capital - 1.0) * 100.0
 
-    # CAGR – requires at least two distinct timestamps
+    # CAGR – requires a minimum time span of 30 days to be meaningful
     cagr: float | None = None
     entry_times = equity_df["entry_time"].to_list()
     exit_times = equity_df["exit_time"].to_list()
@@ -76,7 +76,8 @@ def compute_portfolio_metrics(
     last_ts = exit_times[-1]
     total_seconds = _diff_seconds(first_ts, last_ts)
     total_years = total_seconds / (365.25 * 24 * 3600)
-    if total_years > 0.0 and initial_capital > 0.0:
+    _min_years_for_cagr = 30 / 365.25  # at least 30 calendar days
+    if total_years >= _min_years_for_cagr and initial_capital > 0.0:
         cagr = ((ending_capital / initial_capital) ** (1.0 / total_years) - 1.0) * 100.0
 
     # Maximum drawdown (reported as positive value)

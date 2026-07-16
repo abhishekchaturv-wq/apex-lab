@@ -105,7 +105,7 @@ def simulate_portfolio(
     peak_equity = initial_capital
 
     for i, (entry_time, exit_time, return_pct) in enumerate(
-        zip(entry_times, exit_times, return_pcts, strict=False)
+        zip(entry_times, exit_times, return_pcts, strict=True)
     ):
         starting_equity = current_equity
 

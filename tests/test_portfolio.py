@@ -340,7 +340,7 @@ class TestCAGR:
         trades = pl.DataFrame(
             {
                 "entry_time": [base],
-                "exit_time": [base],  # same time
+                "exit_time": [base + datetime.timedelta(days=10)],  # < 30 days → None
                 "return_pct": [5.0],
             }
         )
