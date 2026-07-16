@@ -5,8 +5,10 @@ from __future__ import annotations
 import datetime
 import importlib.util
 import json
+import sys
 from pathlib import Path
 from types import ModuleType
+from unittest import mock
 
 import polars as pl
 import pytest
@@ -509,3 +511,72 @@ class TestRunEventBacktest:
         assert json_path.exists()
         assert bullish_returns.height == 1
         assert summary["bullish_crossovers"] == 1
+
+
+# ---------------------------------------------------------------------------
+# CLI main() integration
+# ---------------------------------------------------------------------------
+
+
+class TestCLIEventMode:
+    """End-to-end tests that call main() through the CLI entry point."""
+
+    def _make_input_parquet(self, tmp_path: Path) -> Path:
+        closes = [100.0] * 30 + [130.0] * 15 + [90.0] * 25
+        base_ts = datetime.datetime(2024, 1, 2, 9, 15, 0)
+        df = pl.DataFrame(
+            {
+                "timestamp": [
+                    base_ts + datetime.timedelta(minutes=30 * i) for i in range(len(closes))
+                ],
+                "open": [c - 0.5 for c in closes],
+                "high": [c + 1.0 for c in closes],
+                "low": [c - 1.0 for c in closes],
+                "close": closes,
+                "volume": [10_000 + i * 10 for i in range(len(closes))],
+            }
+        )
+        path = tmp_path / "input.parquet"
+        df.write_parquet(path)
+        return path
+
+    def test_cli_event_mode_end_to_end(self, tmp_path: Path) -> None:
+        """main() in event mode must write equity_curve.csv, trades.csv with regime
+        columns, and summary.json with regime_summaries."""
+        rl = _load_script_module()
+        data_path = self._make_input_parquet(tmp_path)
+        trades_path = tmp_path / "trades.csv"
+        equity_path = tmp_path / "equity_curve.csv"
+        summary_path = tmp_path / "summary.json"
+
+        argv = [
+            "research_lab.py",
+            "--mode",
+            "event",
+            "--exit",
+            "opposite_crossover",
+            "--data",
+            str(data_path),
+            "--trades-output",
+            str(trades_path),
+            "--equity-curve-output",
+            str(equity_path),
+            "--backtest-summary-output",
+            str(summary_path),
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            rl.main()
+
+        # equity_curve.csv must exist
+        assert equity_path.exists(), "equity_curve.csv was not written by the CLI"
+
+        # trades.csv must contain regime columns
+        trades = pl.read_csv(trades_path, try_parse_dates=True)
+        assert "trend_regime" in trades.columns, "trend_regime missing from trades.csv"
+        assert "volatility_regime" in trades.columns, "volatility_regime missing from trades.csv"
+
+        # summary.json must contain regime_summaries
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        assert "regime_summaries" in summary, "regime_summaries missing from summary.json"
+        assert "trend_regime" in summary["regime_summaries"]
+        assert "volatility_regime" in summary["regime_summaries"]

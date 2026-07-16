@@ -13,14 +13,15 @@ from typing import Any
 import polars as pl
 
 from apex_lab.research.backtest.backtester import (
-    DEFAULT_SUMMARY_OUTPUT as DEFAULT_BACKTEST_SUMMARY_OUTPUT,
-)
-from apex_lab.research.backtest.backtester import (
+    DEFAULT_EQUITY_CURVE_OUTPUT,
     DEFAULT_TRADES_OUTPUT,
     ExitMode,
     compute_metrics,
     run_backtest,
     write_backtest_reports,
+)
+from apex_lab.research.backtest.backtester import (
+    DEFAULT_SUMMARY_OUTPUT as DEFAULT_BACKTEST_SUMMARY_OUTPUT,
 )
 
 DEFAULT_DATA_PATH = Path("data/raw/30minute/NIFTY BANK.parquet")
@@ -80,6 +81,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_TRADES_OUTPUT,
         help="Path for the backtest trades CSV.",
+    )
+    parser.add_argument(
+        "--equity-curve-output",
+        type=Path,
+        default=DEFAULT_EQUITY_CURVE_OUTPUT,
+        help="Path for the backtest equity curve CSV.",
     )
     parser.add_argument(
         "--backtest-summary-output",
@@ -292,6 +299,7 @@ def run_event_backtest(
     fixed_bars: int = 10,
     trades_output: Path = DEFAULT_TRADES_OUTPUT,
     summary_output: Path = DEFAULT_BACKTEST_SUMMARY_OUTPUT,
+    equity_curve_output: Path | None = None,
 ) -> tuple[pl.DataFrame, dict[str, Any]]:
     """Run the event-driven EMA crossover backtest and write reports to disk.
 
@@ -301,6 +309,8 @@ def run_event_backtest(
         fixed_bars: Bars to hold when exit_mode is fixed_bars.
         trades_output: Destination path for trades CSV.
         summary_output: Destination path for summary JSON.
+        equity_curve_output: Destination path for the equity curve CSV.  If
+            omitted, writes ``equity_curve.csv`` alongside *trades_output*.
 
     Returns:
         A tuple of (trades DataFrame, metrics dictionary).
@@ -309,7 +319,7 @@ def run_event_backtest(
     enriched = compute_ema_signals(df)
     trades = run_backtest(enriched, exit_mode=exit_mode, fixed_bars=fixed_bars)
     metrics = compute_metrics(trades)
-    write_backtest_reports(trades, metrics, trades_output, summary_output)
+    write_backtest_reports(trades, metrics, trades_output, summary_output, equity_curve_output)
     return trades, metrics
 
 
@@ -325,6 +335,7 @@ def main() -> None:
             fixed_bars=args.bars,
             trades_output=args.trades_output,
             summary_output=args.backtest_summary_output,
+            equity_curve_output=args.equity_curve_output,
         )
         logger.info(
             "Backtest complete: %d trades, win_rate=%.1f%%, expectancy=%.4f",
