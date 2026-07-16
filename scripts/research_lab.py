@@ -187,8 +187,8 @@ def _rolling_percentile_rank(series: pl.Series, window: int) -> pl.Series:
         if current is None or not sorted_window:
             continue
 
-        less_or_equal = bisect.bisect_right(sorted_window, current)
-        out[index] = less_or_equal / len(sorted_window) * 100.0
+        rank_position = bisect.bisect_right(sorted_window, current)
+        out[index] = rank_position / len(sorted_window) * 100.0
 
     return pl.Series(out, dtype=pl.Float64)
 

@@ -334,7 +334,7 @@ class TestComputeEquityCurve:
     """Tests for the equity-curve report."""
 
     def test_equity_curve_has_peak_and_drawdown(self) -> None:
-        """Equity curve should accumulate returns and track peak/drawdown."""
+        """Equity curve should accumulate return percentage points and track peak/drawdown."""
         trades = pl.DataFrame(
             {
                 "exit_time": [

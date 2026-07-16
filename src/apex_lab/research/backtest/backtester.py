@@ -232,7 +232,7 @@ def compute_metrics(trades: pl.DataFrame) -> dict[str, Any]:
     expectancy = win_rate * avg_win + loss_rate * avg_loss
 
     max_drawdown_value = equity_curve["drawdown"].max()
-    max_drawdown = float(max_drawdown_value) if max_drawdown_value is not None else 0.0
+    max_drawdown = float(max_drawdown_value) if max_drawdown_value is not None else None
 
     return {
         "number_of_trades": n,
