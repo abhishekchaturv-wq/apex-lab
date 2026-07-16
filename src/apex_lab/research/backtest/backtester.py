@@ -230,7 +230,8 @@ def compute_metrics(trades: pl.DataFrame) -> dict[str, Any]:
     loss_rate = 1.0 - win_rate
     expectancy = win_rate * avg_win + loss_rate * avg_loss
 
-    max_drawdown = float(equity_curve["drawdown"].max())
+    max_drawdown_value = equity_curve["drawdown"].max()
+    max_drawdown = float(max_drawdown_value) if max_drawdown_value is not None else 0.0
 
     return {
         "number_of_trades": n,
@@ -299,6 +300,8 @@ def _build_regime_summaries(trades: pl.DataFrame) -> dict[str, dict[str, Any]]:
             profit_factor = gross_wins / gross_losses if gross_losses > 0 else None
             avg_win = float(wins.mean()) if wins.len() > 0 else 0.0
             avg_loss = float(losses.mean()) if losses.len() > 0 else 0.0
+            # Regimes with no wins or no losses keep the missing side at 0.0 so
+            # expectancy remains well-defined and consistent with the top-level metric.
             expectancy = (win_rate * avg_win) + ((1.0 - win_rate) * avg_loss) if win_rate is not None else None
 
             summaries[str(regime)] = {

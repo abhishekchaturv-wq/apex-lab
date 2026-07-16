@@ -161,7 +161,11 @@ def compute_ema_signals(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def _rolling_percentile_rank(series: pl.Series, window: int) -> pl.Series:
-    """Compute the rolling percentile rank (0–100) of *series*."""
+    """Compute the rolling percentile rank (0–100) of *series*.
+
+    Null input values remain null in the output. The rolling window tracks the
+    most recent non-null values up to *window* entries.
+    """
     values = series.to_list()
     out: list[float | None] = [None] * len(values)
     active_window: deque[float] = deque()
@@ -173,6 +177,7 @@ def _rolling_percentile_rank(series: pl.Series, window: int) -> pl.Series:
             active_window.append(current)
 
         if len(active_window) > window:
+            # Keep exactly the most recent ``window`` non-null values.
             expired = active_window.popleft()
             expired_index = bisect.bisect_left(sorted_window, expired)
             del sorted_window[expired_index]
