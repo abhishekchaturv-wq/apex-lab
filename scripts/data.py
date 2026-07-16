@@ -34,8 +34,8 @@ SUPPORTED_EXCHANGES: tuple[str, ...] = ("NSE",)
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser."""
-    shared = argparse.ArgumentParser(add_help=False)
-    shared.add_argument(
+    shared_parser = argparse.ArgumentParser(add_help=False)
+    shared_parser.add_argument(
         "--debug",
         action="store_true",
         help="Print full Python tracebacks on failures.",
@@ -43,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         description="Historical data CLI for the APEX Lab data engine.",
-        parents=[shared],
+        parents=[shared_parser],
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -51,7 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
         "download",
         description="Download full historical data for a symbol.",
         help="Download full historical data for a symbol.",
-        parents=[shared],
+        parents=[shared_parser],
     )
     download_parser.add_argument("--symbol", required=True, help="Trading symbol to download.")
     download_parser.add_argument(
@@ -88,7 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
         "update",
         description="Download only missing data for a symbol.",
         help="Download only missing data for a symbol.",
-        parents=[shared],
+        parents=[shared_parser],
     )
     update_parser.add_argument("--symbol", required=True, help="Trading symbol to update.")
     update_parser.add_argument(
@@ -102,7 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
         "refresh-instruments",
         description="Refresh the instrument master file.",
         help="Refresh the instrument master file.",
-        parents=[shared],
+        parents=[shared_parser],
     )
 
     return parser
@@ -194,7 +194,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_download(args)
         if args.command == "update":
             return _run_update(args)
-        return _run_refresh_instruments()
+        if args.command == "refresh-instruments":
+            return _run_refresh_instruments()
+        raise ValueError(f"Unsupported command: {args.command}")
     except Exception as exc:
         if args.debug:
             raise
