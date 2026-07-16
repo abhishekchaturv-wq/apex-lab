@@ -172,7 +172,7 @@ def _run_update(args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_refresh_instruments() -> int:
+def _run_refresh_instruments(_: argparse.Namespace) -> int:
     """Execute the refresh-instruments command."""
     data_dir = _resolve_data_dir()
 
@@ -190,13 +190,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     _configure_logging(args.debug)
 
     try:
-        if args.command == "download":
-            return _run_download(args)
-        if args.command == "update":
-            return _run_update(args)
-        if args.command == "refresh-instruments":
-            return _run_refresh_instruments()
-        raise ValueError(f"Unsupported command: {args.command}")
+        handlers = {
+            "download": _run_download,
+            "update": _run_update,
+            "refresh-instruments": _run_refresh_instruments,
+        }
+        return handlers[args.command](args)
     except Exception as exc:
         if args.debug:
             raise
