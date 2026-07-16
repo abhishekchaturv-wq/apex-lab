@@ -76,8 +76,7 @@ def run_backtest(
 
     if exit_mode not in ("opposite_crossover", "fixed_bars"):
         raise ValueError(
-            f"Unknown exit_mode '{exit_mode}'. "
-            "Expected 'opposite_crossover' or 'fixed_bars'."
+            f"Unknown exit_mode '{exit_mode}'. " "Expected 'opposite_crossover' or 'fixed_bars'."
         )
 
     timestamps = df["timestamp"].to_list()
@@ -106,9 +105,7 @@ def run_backtest(
                 if atr_pct[i] is None:
                     volatility_regime = "unknown"
                 else:
-                    volatility_regime = (
-                        "high" if atr_pct[i] >= VOLATILITY_HIGH_THRESHOLD else "low"
-                    )
+                    volatility_regime = "high" if atr_pct[i] >= VOLATILITY_HIGH_THRESHOLD else "low"
         else:
             # Determine whether to exit at bar *i*
             should_exit = False
@@ -225,9 +222,7 @@ def compute_metrics(trades: pl.DataFrame) -> dict[str, Any]:
     gross_losses = abs(float(losses.sum())) if losses.len() > 0 else 0.0
     # profit_factor is undefined (None) only when there are no losing trades at all.
     # When there are no winning trades, profit_factor is 0.0 (zero gross profit / positive loss).
-    profit_factor: float | None = (
-        gross_wins / gross_losses if gross_losses > 0 else None
-    )
+    profit_factor: float | None = gross_wins / gross_losses if gross_losses > 0 else None
 
     avg_win = float(wins.mean()) if wins.len() > 0 else 0.0
     avg_loss = float(losses.mean()) if losses.len() > 0 else 0.0
@@ -306,7 +301,11 @@ def _build_regime_summaries(trades: pl.DataFrame) -> dict[str, dict[str, Any]]:
             avg_loss = float(losses.mean()) if losses.len() > 0 else 0.0
             # Regimes with no wins or no losses keep the missing side at 0.0 so
             # expectancy remains well-defined and consistent with the top-level metric.
-            expectancy = (win_rate * avg_win) + ((1.0 - win_rate) * avg_loss) if win_rate is not None else None
+            expectancy = (
+                (win_rate * avg_win) + ((1.0 - win_rate) * avg_loss)
+                if win_rate is not None
+                else None
+            )
 
             summaries[str(regime)] = {
                 "trades": trade_count,
@@ -342,7 +341,9 @@ def write_backtest_reports(
         equity_curve_output: Destination path for the equity-curve CSV.  If
             omitted, writes ``equity_curve.csv`` alongside *trades_output*.
     """
-    equity_curve_output = equity_curve_output or trades_output.parent / DEFAULT_EQUITY_CURVE_FILENAME
+    equity_curve_output = (
+        equity_curve_output or trades_output.parent / DEFAULT_EQUITY_CURVE_FILENAME
+    )
     equity_curve = compute_equity_curve(trades)
 
     trades_output.parent.mkdir(parents=True, exist_ok=True)
