@@ -29,6 +29,8 @@ from apex_lab.data.storage import (  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
+# The public download_symbol() API does not accept an exchange override, so the
+# CLI only exposes the default NSE lookup path required by this PR.
 SUPPORTED_EXCHANGES: tuple[str, ...] = ("NSE",)
 
 
@@ -76,7 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--exchange",
         default="NSE",
         choices=SUPPORTED_EXCHANGES,
-        help="Exchange to use for the symbol lookup.",
+        help="Exchange to use for the symbol lookup. Only NSE is exposed by this CLI.",
     )
     download_parser.add_argument(
         "--overwrite",
@@ -153,8 +155,7 @@ def _run_download(args: argparse.Namespace) -> int:
 
     df = download_symbol(args.symbol, args.interval, args.from_date, args.to_date)
     logger.info("Downloaded %d candles", df.height)
-    logger.info("Saved to")
-    logger.info("%s", get_raw_path(data_dir, args.interval, args.symbol))
+    logger.info("Saved to %s", get_raw_path(data_dir, args.interval, args.symbol))
     return 0
 
 
@@ -167,8 +168,7 @@ def _run_update(args: argparse.Namespace) -> int:
 
     df = update_symbol(args.symbol, args.interval)
     logger.info("Dataset now contains %d candles", df.height)
-    logger.info("Saved to")
-    logger.info("%s", get_raw_path(data_dir, args.interval, args.symbol))
+    logger.info("Saved to %s", get_raw_path(data_dir, args.interval, args.symbol))
     return 0
 
 
@@ -179,8 +179,7 @@ def _run_refresh_instruments(_: argparse.Namespace) -> int:
     logger.info("Refreshing instrument master")
     df = refresh_instruments()
     logger.info("Refreshed %d instruments", df.height)
-    logger.info("Saved to")
-    logger.info("%s", get_instruments_path(data_dir))
+    logger.info("Saved to %s", get_instruments_path(data_dir))
     return 0
 
 
