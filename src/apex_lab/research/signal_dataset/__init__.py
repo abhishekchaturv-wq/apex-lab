@@ -1,8 +1,8 @@
 """Signal discovery dataset builder package."""
 
 from apex_lab.research.signal_dataset.builder import (
-    SignalDatasetBuildResult,
     SignalDatasetBuilder,
+    SignalDatasetBuildResult,
     SignalDatasetConfig,
 )
 from apex_lab.research.signal_dataset.labels import SignalLabelConfig

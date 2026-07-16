@@ -8,7 +8,6 @@ from typing import Any
 
 import polars as pl
 
-
 DEFAULT_OUTPUT_DIR = Path("reports/lab/signal_dataset")
 
 

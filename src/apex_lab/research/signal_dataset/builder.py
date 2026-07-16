@@ -21,7 +21,11 @@ from apex_lab.research.backtest.backtester import VOLATILITY_HIGH_THRESHOLD
 from apex_lab.research.context.engine import _enrich_ohlcv
 from apex_lab.research.context.registry import get_registry
 from apex_lab.research.factors.factor_engine import FACTOR_REGISTRY
-from apex_lab.research.signal_dataset.labels import SignalLabelConfig, append_signal_labels, label_columns
+from apex_lab.research.signal_dataset.labels import (
+    SignalLabelConfig,
+    append_signal_labels,
+    label_columns,
+)
 from apex_lab.research.signal_dataset.schema import build_schema_payload
 from apex_lab.research.signal_dataset.writer import DEFAULT_OUTPUT_DIR, write_dataset_artifacts
 
