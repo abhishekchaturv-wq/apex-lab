@@ -8,53 +8,58 @@ import polars as pl
 
 from apex_lab.research.factors.base import Factor
 
-_VWAP_WINDOW = 50
+_EPSILON = 1e-9
 
 
 class VwapFactor(Factor):
-    """Rolling VWAP price-level confirmation filter.
+    """Cumulative VWAP price-level confirmation filter.
 
-    Computes a rolling VWAP over the last *window* bars as::
+    Computes a cumulative VWAP from the start of the series as::
 
-        vwap = rolling_sum(close * volume, window) / rolling_sum(volume, window)
+        vwap = cumulative_sum(typical_price * volume) / cumulative_sum(volume)
 
-    A rolling (anchored) VWAP is used rather than a session-reset VWAP so the
-    factor works correctly on multi-session datasets.  The entry signal is
-    ``True`` when the close price is above the rolling VWAP, indicating the
+    where ``typical_price = (high + low + close) / 3``.
+
+    The cumulative form avoids window-edge churn and aligns with the project
+    trend-feature VWAP. It also guards against zero-volume bars by falling back
+    to ``typical_price`` until cumulative volume becomes positive. The entry
+    signal is
+    ``True`` when the close price is above the cumulative VWAP, indicating the
     market is trading at a premium to its recent volume-weighted average.
     """
-
-    def __init__(self, window: int = _VWAP_WINDOW) -> None:
-        self._window = window
 
     @property
     def name(self) -> str:
         return "VWAP"
 
     def compute(self, df: pl.DataFrame) -> pl.DataFrame:
-        """Append ``vwap_{window}`` column if not already present."""
-        col = f"vwap_{self._window}"
+        """Append the cumulative ``vwap`` column if not already present."""
+        col = "vwap"
         if col in df.columns:
             return df
 
+        typical_price = (pl.col("high") + pl.col("low") + pl.col("close")) / 3.0
+        volume = pl.col("volume").cast(pl.Float64).fill_null(0.0)
+        cumulative_tpv = (typical_price * volume).cum_sum()
+        cumulative_vol = volume.cum_sum()
+
         return df.with_columns(
             [
-                (
-                    (pl.col("close") * pl.col("volume"))
-                    .rolling_sum(window_size=self._window)
-                    / pl.col("volume").rolling_sum(window_size=self._window)
-                ).alias(col)
+                pl.when(cumulative_vol > 0.0)
+                .then(cumulative_tpv / (cumulative_vol + _EPSILON))
+                .otherwise(typical_price)
+                .alias(col)
             ]
         )
 
     def signal(self, df: pl.DataFrame) -> pl.Series:
-        """Return ``True`` where close is above the rolling VWAP."""
-        col = f"vwap_{self._window}"
-        return (df["close"] > df[col]).fill_null(False)
+        """Return ``True`` where close is above cumulative VWAP."""
+        return (df["close"] > df["vwap"]).fill_null(False)
 
     def metadata(self) -> dict[str, Any]:
         return {
             "factor": "VWAP",
-            "window": self._window,
-            "signal": f"close > rolling VWAP({self._window})",
+            "mode": "cumulative",
+            "price": "typical_price",
+            "signal": "close > cumulative VWAP",
         }

@@ -48,6 +48,7 @@ FACTOR_REGISTRY: dict[str, Factor] = {
 #: so that the backtester-required columns (``ema_200``, ``atr_pct``,
 #: ``bearish_crossover``) are always present in the enriched DataFrame.
 COMBINATIONS: tuple[tuple[str, ...], ...] = (
+    ("EMA",),
     ("EMA", "RSI"),
     ("EMA", "MACD"),
     ("EMA", "VWAP"),
@@ -79,6 +80,8 @@ def run_factor_research(
     fixed_bars: int = DEFAULT_FIXED_BARS,
     combinations: tuple[tuple[str, ...], ...] = COMBINATIONS,
     registry: dict[str, Factor] | None = None,
+    expected_zero_trade_combinations: tuple[str, ...] = (),
+    fail_on_unexpected_zero_trades: bool = False,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Run all factor-combination backtests and write output reports.
 
@@ -90,12 +93,18 @@ def run_factor_research(
         fixed_bars: Number of bars to hold before exiting each trade.
         combinations: Sequence of factor-key tuples to evaluate.
         registry: Optional factor registry override (for testing).
+        expected_zero_trade_combinations: Combination labels that are
+            explicitly allowed to produce zero trades.
+        fail_on_unexpected_zero_trades: Raise ``ValueError`` if a combination
+            has zero trades and is not listed in
+            ``expected_zero_trade_combinations``.
 
     Returns:
         A tuple ``(leaderboard, summary)`` where *leaderboard* has one row per
         combination and *summary* has one row per trade across all combinations.
     """
     active_registry = registry if registry is not None else FACTOR_REGISTRY
+    allowed_zero_trade_labels = set(expected_zero_trade_combinations)
 
     leaderboard_rows: list[dict[str, Any]] = []
     summary_rows: list[pl.DataFrame] = []
@@ -105,6 +114,7 @@ def run_factor_research(
         logger.info("Evaluating combination: %s", combo_label)
 
         enriched = _enrich_for_combination(df, combo, active_registry)
+        _log_vwap_diagnostics(enriched, combo_label, active_registry, combo)
         combined_signal = _compute_combined_signal(enriched, combo, active_registry)
 
         backtest_df = enriched.with_columns(
@@ -118,12 +128,22 @@ def run_factor_research(
             {
                 "factor_combination": combo_label,
                 "number_of_trades": metrics["number_of_trades"],
+                "trade_reduction_pct": None,
                 "win_rate": metrics["win_rate"],
                 "expectancy": metrics["expectancy"],
                 "profit_factor": metrics["profit_factor"],
                 "maximum_drawdown": metrics["maximum_drawdown"],
             }
         )
+
+        if metrics["number_of_trades"] == 0 and combo_label not in allowed_zero_trade_labels:
+            message = (
+                f"Unexpected zero-trade result for combination '{combo_label}'. "
+                "Add it to expected_zero_trade_combinations if this is intentional."
+            )
+            if fail_on_unexpected_zero_trades:
+                raise ValueError(message)
+            logger.warning(message)
 
         if trades.height > 0:
             trades_with_combo = trades.with_columns(
@@ -174,7 +194,7 @@ def _compute_combined_signal(
     for key in combo:
         factor_signal = registry[key].signal(df).fill_null(False)
         signal = factor_signal if signal is None else (signal & factor_signal)
-    # signal cannot be None here because combinations always have ≥ 2 factors
+    # signal cannot be None here because combinations always have ≥ 1 factor
     assert signal is not None
     return signal
 
@@ -186,21 +206,73 @@ def _build_leaderboard(rows: list[dict[str, Any]]) -> pl.DataFrame:
             {
                 "factor_combination": pl.Series([], dtype=pl.Utf8),
                 "number_of_trades": pl.Series([], dtype=pl.Int64),
+                "trade_reduction_pct": pl.Series([], dtype=pl.Float64),
                 "win_rate": pl.Series([], dtype=pl.Float64),
                 "expectancy": pl.Series([], dtype=pl.Float64),
                 "profit_factor": pl.Series([], dtype=pl.Float64),
                 "maximum_drawdown": pl.Series([], dtype=pl.Float64),
             }
         )
-    return pl.DataFrame(rows).select(
+    leaderboard = pl.DataFrame(rows)
+    baseline = (
+        leaderboard.filter(pl.col("factor_combination") == "EMA")
+        .select("number_of_trades")
+        .to_series()
+        .to_list()
+    )
+    baseline_trades = baseline[0] if baseline else None
+    if baseline_trades is not None and baseline_trades > 0:
+        leaderboard = leaderboard.with_columns(
+            [
+                pl.when(pl.col("factor_combination") == "EMA")
+                .then(0.0)
+                .otherwise((pl.col("number_of_trades") - baseline_trades) / baseline_trades * 100.0)
+                .alias("trade_reduction_pct")
+            ]
+        )
+    else:
+        leaderboard = leaderboard.with_columns([pl.lit(None, dtype=pl.Float64).alias("trade_reduction_pct")])
+
+    return leaderboard.select(
         [
             "factor_combination",
             "number_of_trades",
+            "trade_reduction_pct",
             "win_rate",
             "expectancy",
             "profit_factor",
             "maximum_drawdown",
         ]
+    )
+
+
+def _log_vwap_diagnostics(
+    enriched: pl.DataFrame,
+    combo_label: str,
+    registry: dict[str, Factor],
+    combo: tuple[str, ...],
+) -> None:
+    """Log VWAP diagnostic counts for combinations that include EMA and VWAP."""
+    if "EMA" not in combo or "VWAP" not in combo:
+        return
+
+    ema_signal = registry["EMA"].signal(enriched).fill_null(False)
+    vwap_signal = registry["VWAP"].signal(enriched).fill_null(False)
+    filtered_signal = ema_signal & vwap_signal
+
+    ema_count = int(ema_signal.sum())
+    vwap_count = int(vwap_signal.sum())
+    filtered_count = int(filtered_signal.sum())
+    bars = enriched.height
+    vwap_pct = (vwap_count / bars * 100.0) if bars > 0 else 0.0
+
+    logger.info(
+        "VWAP diagnostics (%s): vwap_bullish=%d (%.2f%% bars), ema_signals_before=%d, after_vwap=%d",
+        combo_label,
+        vwap_count,
+        vwap_pct,
+        ema_count,
+        filtered_count,
     )
 
 

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import datetime
+import math
 from pathlib import Path
 
 import polars as pl
+import pytest
 
 from apex_lab.research.factors.atr_volatility import AtrVolatilityFactor
 from apex_lab.research.factors.base import Factor
@@ -41,6 +43,30 @@ def _make_ohlcv(n: int = 300) -> pl.DataFrame:
             "low": [c - 0.6 for c in closes],
             "close": closes,
             "volume": [50_000 + i * 100 for i in range(n)],
+        }
+    )
+
+
+def _make_nifty_bank_sample(n: int = 1200) -> pl.DataFrame:
+    """Build a deterministic, NIFTY BANK-like 30m OHLCV sample for integration checks."""
+    base_ts = datetime.datetime(2016, 1, 1, 9, 15, 0)
+    closes = [
+        40_000.0 + i * 2.0 + 350.0 * math.sin(i / 8.0) + 120.0 * math.sin(i / 37.0)
+        for i in range(n)
+    ]
+    for i in range(300, 420):
+        closes[i] -= 500.0
+    for i in range(700, 860):
+        closes[i] += 650.0
+    volumes = [100_000 + int(20_000 * (1.0 + math.sin(i / 15.0))) for i in range(n)]
+    return pl.DataFrame(
+        {
+            "timestamp": [base_ts + datetime.timedelta(minutes=30 * i) for i in range(n)],
+            "open": [c - 20.0 for c in closes],
+            "high": [c + 35.0 for c in closes],
+            "low": [c - 40.0 for c in closes],
+            "close": closes,
+            "volume": volumes,
         }
     )
 
@@ -180,7 +206,7 @@ class TestVwapFactor:
     def test_compute_adds_vwap_column(self) -> None:
         df = _make_ohlcv()
         enriched = VwapFactor().compute(df)
-        assert "vwap_50" in enriched.columns
+        assert "vwap" in enriched.columns
 
     def test_compute_is_idempotent(self) -> None:
         df = _make_ohlcv()
@@ -192,8 +218,13 @@ class TestVwapFactor:
     def test_vwap_positive(self) -> None:
         df = _make_ohlcv(200)
         enriched = VwapFactor().compute(df)
-        vwap = enriched["vwap_50"].drop_nulls()
+        vwap = enriched["vwap"].drop_nulls()
         assert float(vwap.min()) > 0.0
+
+    def test_vwap_with_zero_volume_has_no_nan(self) -> None:
+        df = _make_ohlcv().with_columns(pl.lit(0).alias("volume"))
+        enriched = VwapFactor().compute(df)
+        assert int(enriched["vwap"].is_nan().sum()) == 0
 
     def test_signal_no_nulls(self) -> None:
         df = _make_ohlcv()
@@ -203,7 +234,7 @@ class TestVwapFactor:
 
     def test_metadata_keys(self) -> None:
         meta = VwapFactor().metadata()
-        assert "window" in meta
+        assert "mode" in meta
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +313,7 @@ class TestEnrichForCombination:
     def test_ema_and_vwap(self) -> None:
         df = _make_ohlcv()
         enriched = _enrich_for_combination(df, ("EMA", "VWAP"), FACTOR_REGISTRY)
-        assert "vwap_50" in enriched.columns
+        assert "vwap" in enriched.columns
 
 
 class TestComputeCombinedSignal:
@@ -308,10 +339,19 @@ class TestBuildLeaderboard:
         lb = _build_leaderboard([])
         assert lb.is_empty()
         assert "factor_combination" in lb.columns
+        assert "trade_reduction_pct" in lb.columns
         assert "win_rate" in lb.columns
 
     def test_row_count_matches_input(self) -> None:
         rows = [
+            {
+                "factor_combination": "EMA",
+                "number_of_trades": 10,
+                "win_rate": 0.5,
+                "expectancy": 0.2,
+                "profit_factor": 1.2,
+                "maximum_drawdown": -4.0,
+            },
             {
                 "factor_combination": "EMA AND RSI",
                 "number_of_trades": 5,
@@ -322,8 +362,10 @@ class TestBuildLeaderboard:
             }
         ]
         lb = _build_leaderboard(rows)
-        assert lb.height == 1
-        assert lb["factor_combination"][0] == "EMA AND RSI"
+        assert lb.height == 2
+        assert lb["factor_combination"][1] == "EMA AND RSI"
+        assert float(lb["trade_reduction_pct"][0]) == 0.0
+        assert float(lb["trade_reduction_pct"][1]) == -50.0
 
 
 class TestBuildSummary:
@@ -349,6 +391,7 @@ class TestRunFactorResearch:
         assert leaderboard.height == len(COMBINATIONS)
         assert "factor_combination" in leaderboard.columns
         assert "number_of_trades" in leaderboard.columns
+        assert "trade_reduction_pct" in leaderboard.columns
         assert "win_rate" in leaderboard.columns
         assert "expectancy" in leaderboard.columns
         assert "profit_factor" in leaderboard.columns
@@ -378,6 +421,7 @@ class TestRunFactorResearch:
         expected_labels = {" AND ".join(c) for c in COMBINATIONS}
         actual_labels = set(leaderboard["factor_combination"].to_list())
         assert actual_labels == expected_labels
+        assert "EMA" in actual_labels
 
     def test_custom_registry_is_used(self, tmp_path: Path) -> None:
         """Verify the engine accepts a custom registry (for testing isolation)."""
@@ -412,6 +456,60 @@ class TestRunFactorResearch:
         _, summary = run_factor_research(df, output_dir=tmp_path, fixed_bars=5)
         if summary.height > 0:
             assert int(summary["bars_held"].max()) <= 5
+
+    def test_allows_explicit_expected_zero_trade_combination(self, tmp_path: Path) -> None:
+        """Expected zero-trade combinations should not raise."""
+        df = _make_ohlcv(300)
+        run_factor_research(
+            df,
+            output_dir=tmp_path,
+            combinations=(("EMA", "VWAP"),),
+            expected_zero_trade_combinations=("EMA AND VWAP",),
+        )
+
+    def test_unexpected_zero_trade_combination_raises(self, tmp_path: Path) -> None:
+        """Unexpected zero-trade combinations should fail loudly."""
+
+        class AlwaysFalseVwap(VwapFactor):
+            def signal(self, df: pl.DataFrame) -> pl.Series:
+                return pl.Series([False] * len(df), dtype=pl.Boolean)
+
+        registry = {
+            "EMA": EmaTrendFactor(),
+            "RSI": RsiFactor(),
+            "MACD": MacdFactor(),
+            "VWAP": AlwaysFalseVwap(),
+            "ATR": AtrVolatilityFactor(),
+        }
+        df = _make_ohlcv(300)
+        with pytest.raises(ValueError, match="Unexpected zero-trade result"):
+            run_factor_research(
+                df,
+                output_dir=tmp_path,
+                combinations=(("EMA", "VWAP"),),
+                registry=registry,
+                fail_on_unexpected_zero_trades=True,
+            )
+
+
+class TestFactorIntegrationOnNiftyBankSample:
+    """Integration checks on the bundled NIFTY BANK-like sample dataset."""
+
+    def test_every_registered_factor_has_at_least_one_signal(self) -> None:
+        df = _make_nifty_bank_sample()
+        for key, factor in FACTOR_REGISTRY.items():
+            enriched = factor.compute(df)
+            signal_count = int(factor.signal(enriched).fill_null(False).sum())
+            assert signal_count > 0, f"{key} produced zero bullish signals"
+
+    def test_all_combinations_execute_and_have_non_zero_trades(self, tmp_path: Path) -> None:
+        df = _make_nifty_bank_sample()
+        leaderboard, _ = run_factor_research(
+            df, output_dir=tmp_path, fail_on_unexpected_zero_trades=True
+        )
+        assert leaderboard.height == len(COMBINATIONS)
+        assert "EMA" in set(leaderboard["factor_combination"].to_list())
+        assert leaderboard.filter(pl.col("number_of_trades") == 0).height == 0
 
 
 # ---------------------------------------------------------------------------
