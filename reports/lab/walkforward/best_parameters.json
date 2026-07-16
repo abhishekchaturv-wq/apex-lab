@@ -1,0 +1,10 @@
+{
+  "fast_ema": 50,
+  "slow_ema": 200,
+  "mean_profit_factor": 1.42,
+  "mean_expectancy": 0.0312,
+  "mean_win_rate": 0.53,
+  "mean_drawdown": -8.7,
+  "windows_evaluated": 4,
+  "selection_criteria": "highest mean_profit_factor, then lowest mean_drawdown, then highest mean_expectancy"
+}
