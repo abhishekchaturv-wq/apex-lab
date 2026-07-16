@@ -67,6 +67,12 @@ from apex_lab.research.portfolio.report import (
     write_portfolio_reports,
 )
 from apex_lab.research.signal_dataset import SignalDatasetBuilder, SignalDatasetConfig
+from apex_lab.research.signal_discovery import (
+    DEFAULT_OUTPUT_DIR as DEFAULT_SIGNAL_DISCOVERY_OUTPUT_DIR,
+)
+from apex_lab.research.signal_discovery import (
+    run_signal_discovery as run_signal_discovery_engine,
+)
 from apex_lab.research.strategies.engine import (
     DEFAULT_OUTPUT_DIR as STRATEGIES_DEFAULT_OUTPUT_DIR,
 )
@@ -119,6 +125,7 @@ def parse_args() -> argparse.Namespace:
             "pine",
             "strategies",
             "signal_dataset",
+            "signal_discovery",
         ],
         default="forward_return",
         help=(
@@ -126,8 +133,9 @@ def parse_args() -> argparse.Namespace:
             "optimize (walk-forward), factors (factor combination research), "
             "portfolio (portfolio simulation), context (alpha discovery engine), "
             "alpha (alpha scoring engine), pine (Pine Script generator), "
-            "strategies (strategy research framework), or signal_dataset "
-            "(candle-level supervised signal dataset builder)."
+            "strategies (strategy research framework), signal_dataset "
+            "(candle-level supervised signal dataset builder), or "
+            "signal_discovery (feature importance and signal discovery engine)."
         ),
     )
     parser.add_argument(
@@ -289,7 +297,13 @@ def parse_args() -> argparse.Namespace:
         "--output-dir",
         type=Path,
         default=DEFAULT_SIGNAL_DATASET_OUTPUT_DIR,
-        help="Directory for signal dataset artifacts (default: reports/lab/signal_dataset).",
+        help="Directory for signal_dataset/signal_discovery artifacts.",
+    )
+    parser.add_argument(
+        "--dataset",
+        type=Path,
+        default=None,
+        help="Path to signal dataset parquet for signal_discovery mode (overrides --data).",
     )
     parser.add_argument(
         "--symbol",
@@ -677,6 +691,15 @@ def run_signal_dataset(
     return result.dataset, result.summary, result.schema, result.feature_columns
 
 
+def run_signal_discovery(
+    dataset_path: Path,
+    output_dir: Path = DEFAULT_SIGNAL_DISCOVERY_OUTPUT_DIR,
+) -> dict[str, Any]:
+    """Run feature importance and signal discovery analysis over a dataset parquet."""
+    result = run_signal_discovery_engine(dataset_path, output_dir=output_dir)
+    return result.summary
+
+
 def main() -> None:
     """Execute the research lab CLI."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -812,6 +835,20 @@ def main() -> None:
             summary["feature_count"],
             summary["label_count"],
             args.output_dir,
+        )
+    elif args.mode == "signal_discovery":
+        dataset_path = args.dataset or args.data
+        output_dir = (
+            DEFAULT_SIGNAL_DISCOVERY_OUTPUT_DIR
+            if args.output_dir == DEFAULT_SIGNAL_DATASET_OUTPUT_DIR
+            else args.output_dir
+        )
+        summary = run_signal_discovery(dataset_path=dataset_path, output_dir=output_dir)
+        logger.info(
+            "Signal discovery complete: top_features=%d, top_combinations=%d, output=%s",
+            len(summary.get("top_features", [])),
+            len(summary.get("top_feature_combinations", [])),
+            output_dir,
         )
     else:
         bullish_returns, summary = run_research_lab(args.data, args.csv_output, args.json_output)

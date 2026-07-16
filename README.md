@@ -53,6 +53,10 @@ python scripts/research_lab.py --mode alpha
 python scripts/research_lab.py --mode signal_dataset \
     --data ~/kite-test/apex-data-lake/raw/30minute/NIFTY\ BANK.parquet
 
+# Feature importance & signal discovery
+python scripts/research_lab.py --mode signal_discovery \
+    --dataset reports/lab/signal_dataset/dataset.parquet
+
 # Pine Script generator
 python scripts/research_lab.py --mode pine
 ```
