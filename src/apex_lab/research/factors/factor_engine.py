@@ -190,6 +190,9 @@ def _compute_combined_signal(
     registry: dict[str, Factor],
 ) -> pl.Series:
     """AND all factor signals together into a single boolean Series."""
+    if not combo:
+        raise ValueError("combination must contain at least one factor")
+
     signal: pl.Series | None = None
     for key in combo:
         factor_signal = registry[key].signal(df).fill_null(False)
@@ -231,7 +234,15 @@ def _build_leaderboard(rows: list[dict[str, Any]]) -> pl.DataFrame:
             ]
         )
     else:
-        leaderboard = leaderboard.with_columns([pl.lit(None, dtype=pl.Float64).alias("trade_reduction_pct")])
+        leaderboard = leaderboard.with_columns(
+            [
+                pl.when(pl.col("factor_combination") == "EMA")
+                .then(0.0)
+                .otherwise(None)
+                .cast(pl.Float64)
+                .alias("trade_reduction_pct")
+            ]
+        )
 
     return leaderboard.select(
         [

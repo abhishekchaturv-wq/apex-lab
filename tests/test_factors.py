@@ -363,9 +363,12 @@ class TestBuildLeaderboard:
         ]
         lb = _build_leaderboard(rows)
         assert lb.height == 2
-        assert lb["factor_combination"][1] == "EMA AND RSI"
-        assert float(lb["trade_reduction_pct"][0]) == 0.0
-        assert float(lb["trade_reduction_pct"][1]) == -50.0
+        ema_reduction = lb.filter(pl.col("factor_combination") == "EMA")["trade_reduction_pct"][0]
+        ema_rsi_reduction = lb.filter(pl.col("factor_combination") == "EMA AND RSI")[
+            "trade_reduction_pct"
+        ][0]
+        assert float(ema_reduction) == 0.0
+        assert float(ema_rsi_reduction) == -50.0
 
 
 class TestBuildSummary:

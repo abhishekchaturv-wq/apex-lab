@@ -8,8 +8,6 @@ import polars as pl
 
 from apex_lab.research.factors.base import Factor
 
-_EPSILON = 1e-9
-
 
 class VwapFactor(Factor):
     """Cumulative VWAP price-level confirmation filter.
@@ -46,7 +44,7 @@ class VwapFactor(Factor):
         return df.with_columns(
             [
                 pl.when(cumulative_vol > 0.0)
-                .then(cumulative_tpv / (cumulative_vol + _EPSILON))
+                .then(cumulative_tpv / cumulative_vol)
                 .otherwise(typical_price)
                 .alias(col)
             ]
