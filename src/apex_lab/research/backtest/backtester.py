@@ -23,6 +23,7 @@ ExitMode = Literal["opposite_crossover", "fixed_bars"]
 
 DEFAULT_TRADES_OUTPUT = Path("reports/lab/backtest/trades.csv")
 DEFAULT_SUMMARY_OUTPUT = Path("reports/lab/backtest/summary.json")
+DEFAULT_EQUITY_CURVE_FILENAME = "equity_curve.csv"
 DEFAULT_EQUITY_CURVE_OUTPUT = Path("reports/lab/backtest/equity_curve.csv")
 REGIME_SUMMARY_COLUMNS: tuple[str, ...] = ("trend_regime", "volatility_regime")
 
@@ -338,7 +339,7 @@ def write_backtest_reports(
         equity_curve_output: Destination path for the equity-curve CSV.  If
             omitted, writes ``equity_curve.csv`` alongside *trades_output*.
     """
-    equity_curve_output = equity_curve_output or trades_output.with_name(DEFAULT_EQUITY_CURVE_OUTPUT.name)
+    equity_curve_output = equity_curve_output or trades_output.parent / DEFAULT_EQUITY_CURVE_FILENAME
     equity_curve = compute_equity_curve(trades)
 
     trades_output.parent.mkdir(parents=True, exist_ok=True)
