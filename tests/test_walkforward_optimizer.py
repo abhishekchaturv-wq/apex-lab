@@ -1,4 +1,4 @@
-"""Unit tests for walk-forward parameter optimisation."""
+"""Unit tests for walk-forward parameter optimization."""
 
 from __future__ import annotations
 
@@ -482,7 +482,7 @@ class TestSelectBestParameters:
 
 
 class TestRunWalkforwardOptimization:
-    """Integration-style tests for the full optimisation loop."""
+    """Integration-style tests for the full optimization loop."""
 
     def test_raises_on_missing_timestamp_column(self) -> None:
         df = pl.DataFrame({"close": [1.0, 2.0]})

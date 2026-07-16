@@ -99,7 +99,7 @@ def parse_args() -> argparse.Namespace:
         "--optimize-output-dir",
         type=Path,
         default=Path("reports/lab/walkforward"),
-        help="Directory for walk-forward optimisation output files (default: reports/lab/walkforward).",
+        help="Directory for walk-forward optimization output files (default: reports/lab/walkforward).",
     )
     return parser.parse_args()
 
@@ -354,7 +354,7 @@ def main() -> None:
         df = load_ohlcv(args.data)
         summary, leaderboard, best_params = run_optimize(df, output_dir=args.optimize_output_dir)
         logger.info(
-            "Optimisation complete: %d window-pair rows evaluated",
+            "Optimization complete: %d window-pair rows evaluated",
             summary.height,
         )
         if best_params:

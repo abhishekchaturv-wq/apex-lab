@@ -58,7 +58,7 @@ _ATR_PERIOD: int = 14
 #: Rolling window size for the ATR percentile rank.
 _ATR_PERCENTILE_WINDOW: int = 100
 
-#: Default directory for optimisation output files.
+#: Default directory for optimization output files.
 DEFAULT_OUTPUT_DIR: Path = Path("reports/lab/walkforward")
 
 
@@ -316,7 +316,7 @@ def _compute_sharpe(trades: pl.DataFrame, years: float) -> float | None:
 
 
 # ---------------------------------------------------------------------------
-# Core optimisation logic
+# Core optimization logic
 # ---------------------------------------------------------------------------
 
 
@@ -435,7 +435,7 @@ def run_walkforward_optimization(
     test_months: int = TEST_MONTHS,
     advance_months: int = ADVANCE_MONTHS,
 ) -> tuple[pl.DataFrame, pl.DataFrame, dict[str, Any]]:
-    """Run walk-forward optimisation across all EMA pairs.
+    """Run walk-forward optimization across all EMA pairs.
 
     For every walk-forward window the backtester is run on each EMA pair using
     only the out-of-sample test slice.  EMA values are computed on the full
@@ -549,7 +549,7 @@ def write_optimization_reports(
     best_params: dict[str, Any],
     output_dir: Path = DEFAULT_OUTPUT_DIR,
 ) -> None:
-    """Persist optimisation results to *output_dir*.
+    """Persist optimization results to *output_dir*.
 
     Creates three files:
 
@@ -591,9 +591,9 @@ def optimize(
     test_months: int = TEST_MONTHS,
     advance_months: int = ADVANCE_MONTHS,
 ) -> tuple[pl.DataFrame, pl.DataFrame, dict[str, Any]]:
-    """Run walk-forward optimisation and write all reports to *output_dir*.
+    """Run walk-forward optimization and write all reports to *output_dir*.
 
-    This is the primary entry point for the optimisation pipeline.  It calls
+    This is the primary entry point for the optimization pipeline.  It calls
     :func:`run_walkforward_optimization` and then
     :func:`write_optimization_reports`.
 
