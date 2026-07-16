@@ -23,6 +23,15 @@ from apex_lab.research.backtest.backtester import (
 from apex_lab.research.backtest.backtester import (
     DEFAULT_SUMMARY_OUTPUT as DEFAULT_BACKTEST_SUMMARY_OUTPUT,
 )
+from apex_lab.research.context.engine import (
+    DEFAULT_FIXED_BARS as CONTEXT_DEFAULT_FIXED_BARS,
+)
+from apex_lab.research.context.engine import (
+    DEFAULT_OUTPUT_DIR as DEFAULT_CONTEXT_OUTPUT_DIR,
+)
+from apex_lab.research.context.engine import (
+    run_context_research,
+)
 from apex_lab.research.factors.factor_engine import (
     DEFAULT_FIXED_BARS as FACTORS_DEFAULT_FIXED_BARS,
 )
@@ -81,12 +90,12 @@ def parse_args() -> argparse.Namespace:
     # Event-driven backtest arguments
     parser.add_argument(
         "--mode",
-        choices=["forward_return", "event", "optimize", "factors", "portfolio"],
+        choices=["forward_return", "event", "optimize", "factors", "portfolio", "context"],
         default="forward_return",
         help=(
             "Analysis mode: forward_return (default), event (backtest), "
             "optimize (walk-forward), factors (factor combination research), "
-            "or portfolio (portfolio simulation)."
+            "portfolio (portfolio simulation), or context (alpha discovery engine)."
         ),
     )
     parser.add_argument(
@@ -164,6 +173,18 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_PORTFOLIO_OUTPUT_DIR,
         help="Directory for portfolio simulation output files (default: reports/lab/portfolio).",
+    )
+    parser.add_argument(
+        "--context-output-dir",
+        type=Path,
+        default=DEFAULT_CONTEXT_OUTPUT_DIR,
+        help="Directory for context research output files (default: reports/lab/context).",
+    )
+    parser.add_argument(
+        "--context-bars",
+        type=int,
+        default=CONTEXT_DEFAULT_FIXED_BARS,
+        help="Number of bars to hold per trade in context research (default: 10).",
     )
     # Brokerage / cost hooks (reserved for future NSE cost models)
     parser.add_argument(
@@ -462,6 +483,25 @@ def run_portfolio(
     return summary, equity_df
 
 
+def run_context(
+    data_path: Path,
+    output_dir: Path = DEFAULT_CONTEXT_OUTPUT_DIR,
+    fixed_bars: int = CONTEXT_DEFAULT_FIXED_BARS,
+) -> tuple:
+    """Run the Alpha Discovery Engine and write all context research reports.
+
+    Args:
+        data_path: Path to the OHLCV parquet file.
+        output_dir: Directory for output files.
+        fixed_bars: Number of bars to hold per trade.
+
+    Returns:
+        A tuple of (summary, leaderboard, best_features, correlation).
+    """
+    df = load_ohlcv(data_path)
+    return run_context_research(df, output_dir=output_dir, fixed_bars=fixed_bars)
+
+
 def run_factors(
     data_path: Path,
     output_dir: Path = FACTORS_DEFAULT_OUTPUT_DIR,
@@ -486,7 +526,19 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     args = parse_args()
 
-    if args.mode == "event":
+    if args.mode == "context":
+        summary, leaderboard, best_features, correlation = run_context(
+            data_path=args.data,
+            output_dir=args.context_output_dir,
+            fixed_bars=args.context_bars,
+        )
+        logger.info(
+            "Context research complete: %d feature-buckets evaluated, "
+            "%d leaderboard entries",
+            summary.height,
+            leaderboard.height,
+        )
+    elif args.mode == "event":
         trades, metrics = run_event_backtest(
             data_path=args.data,
             exit_mode=args.exit_mode,
