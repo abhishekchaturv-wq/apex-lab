@@ -184,7 +184,14 @@ def _run_refresh_instruments(_: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the data CLI."""
+    """Run the data CLI.
+
+    Args:
+        argv: Optional CLI arguments. Defaults to ``sys.argv`` when ``None``.
+
+    Returns:
+        Process exit code: ``0`` on success, ``1`` on handled runtime failure.
+    """
     args = parse_args(argv)
     _configure_logging(args.debug)
 
