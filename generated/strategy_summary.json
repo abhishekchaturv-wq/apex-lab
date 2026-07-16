@@ -1,0 +1,54 @@
+{
+  "generation_timestamp": "2026-07-16T11:34:01.477186+00:00",
+  "generator_version": "1.0.0",
+  "research_version": "0.1.0",
+  "pine_version": "5",
+  "ema_parameters": {
+    "fast": 50,
+    "slow": 200
+  },
+  "context_filters": [
+    "ema200_side",
+    "dist_ema200",
+    "dist_ema50",
+    "ema50_slope",
+    "ema200_slope",
+    "atr_percentile",
+    "atr_state",
+    "realized_vol_20",
+    "bb_width_pct",
+    "rsi_bucket",
+    "macd_hist_bucket",
+    "adx_bucket",
+    "roc10_bucket",
+    "roc20_bucket",
+    "vwap_side",
+    "dist_vwap",
+    "vwap_slope",
+    "higher_high",
+    "higher_low",
+    "lower_high",
+    "lower_low",
+    "swing_distance",
+    "gap_pct_bucket",
+    "or_position",
+    "inside_or",
+    "hour",
+    "day_of_week",
+    "month",
+    "quarter"
+  ],
+  "alpha_weights": {
+    "momentum": 19.267014,
+    "volatility": 12.376232,
+    "trend": 24.518787,
+    "opening_range": 14.414937,
+    "market_structure": 23.844402,
+    "vwap": 5.578628
+  },
+  "input_files_used": [
+    "reports/lab/walkforward/best_parameters.json",
+    "reports/lab/context/best_features.json",
+    "reports/lab/alpha/weights.json"
+  ]
+}

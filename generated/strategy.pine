@@ -1,0 +1,114 @@
+//@version=5
+
+strategy(
+    "Apex Research Strategy",
+    overlay=true,
+    pyramiding=0,
+    process_orders_on_close=true,
+    initial_capital=25000
+)
+
+// ── Strategy Inputs ──────────────────────────────────────────────────────
+emaFastLen         = input.int(50,   title="EMA Fast",              minval=1,   group="EMA Parameters")
+emaSlowLen         = input.int(200,  title="EMA Slow",              minval=1,   group="EMA Parameters")
+alphaThreshold     = input.float(50.0, title="Alpha Threshold (0-100)",  minval=0, maxval=100, group="Alpha Score")
+atrStopMult        = input.float(2.0,  title="ATR Stop Multiplier",      minval=0.1,           group="Risk Management")
+riskPct            = input.float(1.0,  title="Risk %",                   minval=0.01,          group="Risk Management")
+enableLong         = input.bool(true,  title="Enable Long",                                    group="Trade Direction")
+enableShort        = input.bool(false, title="Enable Short",                                   group="Trade Direction")
+useAtrStop         = input.bool(true,  title="Use ATR Stop",                                   group="Exits")
+useTrailingStop    = input.bool(false, title="Use Trailing Stop",                               group="Exits")
+showAlphaBg        = input.bool(true,  title="Show Alpha Background",                          group="Visuals")
+
+// Generated from Walk Forward Optimization
+// ── Indicators ───────────────────────────────────────────────────────────
+fastEMA   = ta.ema(close, emaFastLen)
+slowEMA   = ta.ema(close, emaSlowLen)
+ema200    = ta.ema(close, 200)
+vwapVal   = ta.vwap(hlc3)
+atrVal    = ta.atr(14)
+rsiVal    = ta.rsi(close, 14)
+[macdLine, signalLine, macdHist] = ta.macd(close, 12, 26, 9)
+
+// ── Context Filters ──────────────────────────────────────────────────────
+// Generated from Context Discovery Engine
+aboveEMA200   = close > ema200
+aboveVWAP     = close > vwapVal
+ema200Slope   = ema200 - ema200[5]
+ema200Rising  = ema200Slope > 0
+ema200SlopeLine = ema200 - ema200[5]
+atrHighRegime  = atrVal > ta.sma(atrVal, 20)
+atrNeutral     = atrVal / close * 100 < 1.5
+gapFlat        = math.abs(open - close[1]) / close[1] * 100 < 0.3
+aboveORHigh    = close > ta.highest(high[1], 13)
+outsideOR      = close > ta.highest(high[1], 13) or close < ta.lowest(low[1], 13)
+timeFilter     = hour >= 9 and hour <= 14
+dayFilter      = dayofweek != dayofweek.sunday and dayofweek != dayofweek.saturday
+
+// ── Alpha Score ──────────────────────────────────────────────────────────
+// Generated from Alpha Scoring Engine
+trendScore          = (close > ema200 ? 1.0 : 0.0) * 24.518787
+momentumScore       = (rsiVal > 50 ? 1.0 : 0.0) * 19.267014
+volatilityScore     = (atrVal / close * 100 < 1.5 ? 1.0 : 0.0) * 12.376232
+vwapScore           = (close > vwapVal ? 1.0 : 0.0) * 5.578628
+mktStructureScore   = (close > ta.highest(high[1], 5) ? 1.0 : 0.0) * 23.844402
+orScore             = (close > ta.highest(high[1], 13) ? 1.0 : 0.0) * 14.414937
+timeScore           = (hour >= 9 and hour <= 14 ? 1.0 : 0.0) * 0
+rawAlpha            = trendScore + momentumScore + volatilityScore + vwapScore + mktStructureScore + orScore + timeScore
+totalWeight         = 100.0
+alphaScore          = totalWeight > 0 ? math.min(rawAlpha / totalWeight * 100, 100) : 0.0
+
+// ── Entry Logic ──────────────────────────────────────────────────────────
+longCondition  = ta.crossover(fastEMA, slowEMA)
+    and alphaScore >= alphaThreshold
+    and aboveEMA200
+    and aboveVWAP
+    and enableLong
+
+shortCondition = ta.crossunder(fastEMA, slowEMA)
+    and alphaScore >= alphaThreshold
+    and not aboveEMA200
+    and not aboveVWAP
+    and enableShort
+
+// ── Exit Logic ───────────────────────────────────────────────────────────
+longExitCondition  = ta.crossunder(fastEMA, slowEMA)
+shortExitCondition = ta.crossover(fastEMA, slowEMA)
+
+// ── Position Sizing & Order Execution ────────────────────────────────────
+stopDistance  = useAtrStop ? atrStopMult * atrVal : close * 0.02
+trailOffset   = useTrailingStop ? atrStopMult * atrVal : na
+
+if longCondition
+    strategy.entry("Long", strategy.long)
+    if useAtrStop
+        strategy.exit("Long Exit", "Long", stop=close - stopDistance, trail_offset=useTrailingStop ? trailOffset : na)
+
+if shortCondition
+    strategy.entry("Short", strategy.short)
+    if useAtrStop
+        strategy.exit("Short Exit", "Short", stop=close + stopDistance, trail_offset=useTrailingStop ? trailOffset : na)
+
+if longExitCondition
+    strategy.close("Long")
+
+if shortExitCondition
+    strategy.close("Short")
+
+// ── Plots ────────────────────────────────────────────────────────────────
+plot(fastEMA,  title="EMA Fast",  color=color.new(color.blue,   0), linewidth=1)
+plot(slowEMA,  title="EMA Slow",  color=color.new(color.orange, 0), linewidth=2)
+plot(ema200,   title="EMA 200",   color=color.new(color.gray,   0), linewidth=1)
+plot(vwapVal,  title="VWAP",      color=color.new(color.purple, 0), linewidth=1)
+
+// Alpha Score background (requires a separate pane in TradingView)
+alphaBgColor = alphaScore >= 70 ? color.new(color.green,  85)
+             : alphaScore >= 40 ? color.new(color.yellow, 85)
+             :                    color.new(color.red,    85)
+bgcolor(showAlphaBg ? alphaBgColor : na, title="Alpha Background")
+
+// ── Alerts ───────────────────────────────────────────────────────────────
+alertcondition(longCondition,              title="Long Entry",            message="Apex: Long Entry signal triggered")
+alertcondition(longExitCondition,          title="Long Exit",             message="Apex: Long Exit signal triggered")
+alertcondition(alphaScore >= alphaThreshold, title="Alpha Above Threshold", message="Apex: Alpha score above threshold")
+alertcondition(alphaScore < alphaThreshold,  title="Alpha Below Threshold", message="Apex: Alpha score below threshold")

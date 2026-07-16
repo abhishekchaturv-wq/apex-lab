@@ -12,6 +12,12 @@ from typing import Any
 
 import polars as pl
 
+from apex_lab.export.pine_generator import (
+    DEFAULT_ALPHA_WEIGHTS,
+    DEFAULT_CONTEXT_FEATURES,
+    DEFAULT_WALKFORWARD_PARAMS,
+    generate_pine_strategy,
+)
 from apex_lab.research.alpha.engine import (
     DEFAULT_OUTPUT_DIR as DEFAULT_ALPHA_OUTPUT_DIR,
 )
@@ -96,13 +102,13 @@ def parse_args() -> argparse.Namespace:
     # Event-driven backtest arguments
     parser.add_argument(
         "--mode",
-        choices=["forward_return", "event", "optimize", "factors", "portfolio", "context", "alpha"],
+        choices=["forward_return", "event", "optimize", "factors", "portfolio", "context", "alpha", "pine"],
         default="forward_return",
         help=(
             "Analysis mode: forward_return (default), event (backtest), "
             "optimize (walk-forward), factors (factor combination research), "
             "portfolio (portfolio simulation), context (alpha discovery engine), "
-            "or alpha (alpha scoring engine)."
+            "alpha (alpha scoring engine), or pine (Pine Script generator)."
         ),
     )
     parser.add_argument(
@@ -198,6 +204,30 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_ALPHA_OUTPUT_DIR,
         help="Directory for alpha scoring output files (default: reports/lab/alpha).",
+    )
+    parser.add_argument(
+        "--pine-output-dir",
+        type=Path,
+        default=Path("generated"),
+        help="Directory for Pine Script generator output files (default: generated).",
+    )
+    parser.add_argument(
+        "--pine-walkforward-params",
+        type=Path,
+        default=DEFAULT_WALKFORWARD_PARAMS,
+        help="Path to walk-forward best_parameters.json (default: reports/lab/walkforward/best_parameters.json).",
+    )
+    parser.add_argument(
+        "--pine-context-features",
+        type=Path,
+        default=DEFAULT_CONTEXT_FEATURES,
+        help="Path to context best_features.json (default: reports/lab/context/best_features.json).",
+    )
+    parser.add_argument(
+        "--pine-alpha-weights",
+        type=Path,
+        default=DEFAULT_ALPHA_WEIGHTS,
+        help="Path to alpha weights.json (default: reports/lab/alpha/weights.json).",
     )
     # Brokerage / cost hooks (reserved for future NSE cost models)
     parser.add_argument(
@@ -556,7 +586,16 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     args = parse_args()
 
-    if args.mode == "context":
+    if args.mode == "pine":
+        pine_path, summary_path = generate_pine_strategy(
+            walkforward_params_path=args.pine_walkforward_params,
+            context_features_path=args.pine_context_features,
+            alpha_weights_path=args.pine_alpha_weights,
+            output_dir=args.pine_output_dir,
+        )
+        logger.info("Pine Script generated: %s", pine_path)
+        logger.info("Strategy summary written: %s", summary_path)
+    elif args.mode == "context":
         summary, leaderboard, best_features, correlation = run_context(
             data_path=args.data,
             output_dir=args.context_output_dir,
