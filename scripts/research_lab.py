@@ -23,6 +23,15 @@ from apex_lab.research.backtest.backtester import (
 from apex_lab.research.backtest.backtester import (
     DEFAULT_SUMMARY_OUTPUT as DEFAULT_BACKTEST_SUMMARY_OUTPUT,
 )
+from apex_lab.research.factors.factor_engine import (
+    DEFAULT_FIXED_BARS as FACTORS_DEFAULT_FIXED_BARS,
+)
+from apex_lab.research.factors.factor_engine import (
+    DEFAULT_OUTPUT_DIR as FACTORS_DEFAULT_OUTPUT_DIR,
+)
+from apex_lab.research.factors.factor_engine import (
+    run_factor_research,
+)
 from apex_lab.research.optimization.walkforward_optimizer import optimize as run_optimize
 
 DEFAULT_DATA_PATH = Path("data/raw/30minute/NIFTY BANK.parquet")
@@ -60,9 +69,12 @@ def parse_args() -> argparse.Namespace:
     # Event-driven backtest arguments
     parser.add_argument(
         "--mode",
-        choices=["forward_return", "event", "optimize"],
+        choices=["forward_return", "event", "optimize", "factors"],
         default="forward_return",
-        help="Analysis mode: forward_return (default), event (backtest), or optimize (walk-forward).",
+        help=(
+            "Analysis mode: forward_return (default), event (backtest), "
+            "optimize (walk-forward), or factors (factor combination research)."
+        ),
     )
     parser.add_argument(
         "--exit",
@@ -100,6 +112,18 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("reports/lab/walkforward"),
         help="Directory for walk-forward optimization output files (default: reports/lab/walkforward).",
+    )
+    parser.add_argument(
+        "--factors-output-dir",
+        type=Path,
+        default=FACTORS_DEFAULT_OUTPUT_DIR,
+        help="Directory for factor combination research output files (default: reports/lab/factors).",
+    )
+    parser.add_argument(
+        "--factors-bars",
+        type=int,
+        default=FACTORS_DEFAULT_FIXED_BARS,
+        help="Number of bars to hold per trade in factor research (default: 10).",
     )
     return parser.parse_args()
 
@@ -330,6 +354,25 @@ def run_event_backtest(
     return trades, metrics
 
 
+def run_factors(
+    data_path: Path,
+    output_dir: Path = FACTORS_DEFAULT_OUTPUT_DIR,
+    fixed_bars: int = FACTORS_DEFAULT_FIXED_BARS,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Run factor combination research and write reports to disk.
+
+    Args:
+        data_path: Path to the OHLCV parquet file.
+        output_dir: Directory for leaderboard.csv and summary.csv outputs.
+        fixed_bars: Number of bars to hold per trade.
+
+    Returns:
+        A tuple of (leaderboard DataFrame, summary DataFrame).
+    """
+    df = load_ohlcv(data_path)
+    return run_factor_research(df, output_dir=output_dir, fixed_bars=fixed_bars)
+
+
 def main() -> None:
     """Execute the research lab CLI."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -364,6 +407,17 @@ def main() -> None:
                 best_params["slow_ema"],
                 best_params.get("mean_profit_factor") or 0.0,
             )
+    elif args.mode == "factors":
+        leaderboard, summary = run_factors(
+            data_path=args.data,
+            output_dir=args.factors_output_dir,
+            fixed_bars=args.factors_bars,
+        )
+        logger.info(
+            "Factor research complete: %d combinations evaluated, %d total trades",
+            leaderboard.height,
+            summary.height,
+        )
     else:
         bullish_returns, summary = run_research_lab(args.data, args.csv_output, args.json_output)
         logger.info(
