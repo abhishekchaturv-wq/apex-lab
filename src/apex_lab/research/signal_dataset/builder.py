@@ -23,7 +23,7 @@ from apex_lab.research.context.registry import get_registry
 from apex_lab.research.factors.factor_engine import FACTOR_REGISTRY
 from apex_lab.research.signal_dataset.labels import (
     SignalLabelConfig,
-    append_signal_labels,
+    append_signal_classes,
     label_columns,
 )
 from apex_lab.research.signal_dataset.schema import build_schema_payload
@@ -84,7 +84,7 @@ class SignalDatasetBuilder:
             context_leaderboard_path=config.context_leaderboard_path,
         )
         enriched = _append_metadata_columns(enriched, config)
-        dataset = append_signal_labels(enriched, config.label_config)
+        dataset = append_signal_classes(enriched, config.label_config)
 
         labels = label_columns(config.label_config)
         metadata = ["symbol", "interval", "timestamp", "session_id", "weekday", "market_regime"]

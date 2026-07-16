@@ -11,7 +11,7 @@ from types import ModuleType
 import polars as pl
 
 from apex_lab.research.signal_dataset.builder import SignalDatasetBuilder, SignalDatasetConfig
-from apex_lab.research.signal_dataset.labels import SignalLabelConfig, append_signal_labels
+from apex_lab.research.signal_dataset.labels import SignalLabelConfig, append_signal_classes
 
 _SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "research_lab.py"
 
@@ -44,7 +44,7 @@ def _make_ohlcv(n: int = 900) -> pl.DataFrame:
 
 def test_label_generation_columns_and_classes() -> None:
     config = SignalLabelConfig(horizons=(5, 10, 20, 40))
-    labeled = append_signal_labels(_make_ohlcv(120), config)
+    labeled = append_signal_classes(_make_ohlcv(120), config)
 
     expected = {
         "future_return_5",
@@ -56,7 +56,7 @@ def test_label_generation_columns_and_classes() -> None:
         "maximum_favorable_excursion",
         "maximum_adverse_excursion",
         "direction",
-        "signal_label",
+        "signal_class",
         "label_strong_bull_move",
         "label_bull_move",
         "label_neutral",
@@ -65,7 +65,7 @@ def test_label_generation_columns_and_classes() -> None:
     }
     assert expected.issubset(set(labeled.columns))
 
-    classes = set(labeled.get_column("signal_label").drop_nulls().unique().to_list())
+    classes = set(labeled.get_column("signal_class").drop_nulls().unique().to_list())
     assert classes.issubset(
         {"Strong Bull Move", "Bull Move", "Neutral", "Bear Move", "Strong Bear Move"}
     )

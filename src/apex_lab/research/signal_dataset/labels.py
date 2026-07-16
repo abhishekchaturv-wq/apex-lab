@@ -35,7 +35,7 @@ class SignalLabelConfig:
             raise ValueError("bull_threshold must be < strong_bull_threshold")
 
 
-def append_signal_labels(df: pl.DataFrame, config: SignalLabelConfig) -> pl.DataFrame:
+def append_signal_classes(df: pl.DataFrame, config: SignalLabelConfig) -> pl.DataFrame:
     """Append future-looking labels for supervised signal discovery."""
     labeled = df.with_columns(_future_return_expr(h).alias(f"future_return_{h}") for h in config.horizons)
 
@@ -54,18 +54,18 @@ def append_signal_labels(df: pl.DataFrame, config: SignalLabelConfig) -> pl.Data
                 pl.col("future_high_return").alias("maximum_favorable_excursion"),
                 pl.col("future_low_return").alias("maximum_adverse_excursion"),
                 _direction_expr(direction_col, config).alias("direction"),
-                _signal_label_expr(direction_col, config).alias("signal_label"),
+                _signal_class_expr(direction_col, config).alias("signal_class"),
             ]
         )
         .with_columns(
             [
-                (pl.col("signal_label") == "Strong Bull Move")
+                (pl.col("signal_class") == "Strong Bull Move")
                 .cast(pl.Int8)
                 .alias("label_strong_bull_move"),
-                (pl.col("signal_label") == "Bull Move").cast(pl.Int8).alias("label_bull_move"),
-                (pl.col("signal_label") == "Neutral").cast(pl.Int8).alias("label_neutral"),
-                (pl.col("signal_label") == "Bear Move").cast(pl.Int8).alias("label_bear_move"),
-                (pl.col("signal_label") == "Strong Bear Move")
+                (pl.col("signal_class") == "Bull Move").cast(pl.Int8).alias("label_bull_move"),
+                (pl.col("signal_class") == "Neutral").cast(pl.Int8).alias("label_neutral"),
+                (pl.col("signal_class") == "Bear Move").cast(pl.Int8).alias("label_bear_move"),
+                (pl.col("signal_class") == "Strong Bear Move")
                 .cast(pl.Int8)
                 .alias("label_strong_bear_move"),
             ]
@@ -83,7 +83,7 @@ def label_columns(config: SignalLabelConfig) -> list[str]:
         "maximum_favorable_excursion",
         "maximum_adverse_excursion",
         "direction",
-        "signal_label",
+        "signal_class",
         "label_strong_bull_move",
         "label_bull_move",
         "label_neutral",
@@ -114,7 +114,7 @@ def _direction_expr(return_column: str, config: SignalLabelConfig) -> pl.Expr:
     )
 
 
-def _signal_label_expr(return_column: str, config: SignalLabelConfig) -> pl.Expr:
+def _signal_class_expr(return_column: str, config: SignalLabelConfig) -> pl.Expr:
     return (
         pl.when(pl.col(return_column).is_null())
         .then(pl.lit(None, dtype=pl.Utf8))
