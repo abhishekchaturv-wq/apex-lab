@@ -2,7 +2,7 @@
 
 Computes moving-average and VWAP based trend indicators.
 
-Required columns: ``high``, ``low``, ``close``, ``volume``
+Required columns: ``timestamp``, ``high``, ``low``, ``close``, ``volume``
 
 Computed features
 -----------------
@@ -11,7 +11,7 @@ Computed features
 - ``ema_50``         — 50-period EMA of close
 - ``ema_200``        — 200-period EMA of close
 - ``ema_slope``      — Rate of change of EMA-9 (% per bar)
-- ``vwap``           — Cumulative VWAP from start of series
+- ``vwap``           — Session VWAP resetting each trading day
 - ``vwap_dist``      — Distance of close from VWAP (%)
 """
 
@@ -51,8 +51,8 @@ class TrendFeatures(FeatureGroup):
         """Compute trend features and append them to *df*.
 
         Args:
-            df: OHLCV DataFrame. Must contain ``high``, ``low``, ``close``,
-                ``volume``.
+            df: OHLCV DataFrame. Must contain ``timestamp``, ``high``, ``low``,
+                ``close``, ``volume``.
 
         Returns:
             Input DataFrame with 7 additional feature columns.
@@ -60,7 +60,7 @@ class TrendFeatures(FeatureGroup):
         Raises:
             ValueError: If any required column is absent.
         """
-        self._require_columns(df, ["high", "low", "close", "volume"])
+        self._require_columns(df, ["timestamp", "high", "low", "close", "volume"])
         logger.debug("[trend] Computing trend features for %d rows", len(df))
 
         # ------------------------------------------------------------------ #
@@ -84,14 +84,25 @@ class TrendFeatures(FeatureGroup):
         ).alias("ema_slope")
 
         # ------------------------------------------------------------------ #
-        # VWAP (cumulative from row 0)                                         #
+        # VWAP (session reset by trading date)                                 #
         # ------------------------------------------------------------------ #
         typical_price = (pl.col("high") + pl.col("low") + pl.col("close")) / 3.0
-        cumulative_tpv = (typical_price * pl.col("volume")).cum_sum()
-        cumulative_vol = pl.col("volume").cast(pl.Float64).cum_sum()
-        vwap = (cumulative_tpv / (cumulative_vol + epsilon)).alias("vwap")
+        session_col = "_trend_session"
+        volume = pl.col("volume").cast(pl.Float64)
+        cumulative_tpv = (typical_price * volume).cum_sum().over(session_col)
+        cumulative_vol = volume.cum_sum().over(session_col)
+        vwap = (
+            pl.when(cumulative_vol > 0.0)
+            .then(cumulative_tpv / cumulative_vol)
+            .otherwise(typical_price)
+            .alias("vwap")
+        )
 
-        df = df.with_columns([ema_slope, vwap])
+        df = (
+            df.with_columns([ema_slope, pl.col("timestamp").dt.date().alias(session_col)])
+            .with_columns([vwap])
+            .drop(session_col)
+        )
 
         # ------------------------------------------------------------------ #
         # VWAP distance                                                        #

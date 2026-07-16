@@ -10,20 +10,18 @@ from apex_lab.research.factors.base import Factor
 
 
 class VwapFactor(Factor):
-    """Cumulative VWAP price-level confirmation filter.
+    """Session VWAP price-level confirmation filter.
 
-    Computes a cumulative VWAP from the start of the series as::
+    Computes an intraday VWAP that resets each trading session as::
 
         vwap = cumulative_sum(typical_price * volume) / cumulative_sum(volume)
 
     where ``typical_price = (high + low + close) / 3``.
 
-    The cumulative form avoids window-edge churn and aligns with the project
-    trend-feature VWAP. It also guards against zero-volume bars by falling back
-    to ``typical_price`` until cumulative volume becomes positive. The entry
-    signal is
-    ``True`` when the close price is above the cumulative VWAP, indicating the
-    market is trading at a premium to its recent volume-weighted average.
+    The cumulative sums are partitioned by trading date so multi-year history
+    cannot pin VWAP to stale price regimes. Zero-volume bars fall back to
+    ``typical_price`` until session volume becomes positive. The entry signal is
+    ``True`` when the close price is above the session VWAP.
     """
 
     @property
@@ -31,23 +29,28 @@ class VwapFactor(Factor):
         return "VWAP"
 
     def compute(self, df: pl.DataFrame) -> pl.DataFrame:
-        """Append the cumulative ``vwap`` column if not already present."""
+        """Append the session-reset ``vwap`` column if not already present."""
         col = "vwap"
         if col in df.columns:
             return df
 
         typical_price = (pl.col("high") + pl.col("low") + pl.col("close")) / 3.0
         volume = pl.col("volume").cast(pl.Float64).fill_null(0.0)
-        cumulative_tpv = (typical_price * volume).cum_sum()
-        cumulative_vol = volume.cum_sum()
+        session_col = "_vwap_session"
+        cumulative_tpv = (typical_price * volume).cum_sum().over(session_col)
+        cumulative_vol = volume.cum_sum().over(session_col)
 
-        return df.with_columns(
-            [
-                pl.when(cumulative_vol > 0.0)
-                .then(cumulative_tpv / cumulative_vol)
-                .otherwise(typical_price)
-                .alias(col)
-            ]
+        return (
+            df.with_columns(pl.col("timestamp").dt.date().alias(session_col))
+            .with_columns(
+                [
+                    pl.when(cumulative_vol > 0.0)
+                    .then(cumulative_tpv / cumulative_vol)
+                    .otherwise(typical_price)
+                    .alias(col)
+                ]
+            )
+            .drop(session_col)
         )
 
     def signal(self, df: pl.DataFrame) -> pl.Series:
@@ -57,7 +60,7 @@ class VwapFactor(Factor):
     def metadata(self) -> dict[str, Any]:
         return {
             "factor": "VWAP",
-            "mode": "cumulative",
+            "mode": "session",
             "price": "typical_price",
-            "signal": "close > cumulative VWAP",
+            "signal": "close > session VWAP",
         }

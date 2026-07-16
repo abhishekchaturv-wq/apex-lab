@@ -108,13 +108,16 @@ def run_factor_research(
 
     leaderboard_rows: list[dict[str, Any]] = []
     summary_rows: list[pl.DataFrame] = []
+    logged_vwap_diagnostics = False
 
     for combo in combinations:
         combo_label = " AND ".join(combo)
         logger.info("Evaluating combination: %s", combo_label)
 
         enriched = _enrich_for_combination(df, combo, active_registry)
-        _log_vwap_diagnostics(enriched, combo_label, active_registry, combo)
+        if not logged_vwap_diagnostics and "EMA" in combo and "VWAP" in combo:
+            _log_vwap_diagnostics(enriched, combo_label, active_registry)
+            logged_vwap_diagnostics = True
         combined_signal = _compute_combined_signal(enriched, combo, active_registry)
 
         backtest_df = enriched.with_columns(
@@ -257,33 +260,77 @@ def _build_leaderboard(rows: list[dict[str, Any]]) -> pl.DataFrame:
     )
 
 
-def _log_vwap_diagnostics(
+def _collect_vwap_diagnostics(
     enriched: pl.DataFrame,
-    combo_label: str,
     registry: dict[str, Factor],
-    combo: tuple[str, ...],
-) -> None:
-    """Log VWAP diagnostic counts for combinations that include EMA and VWAP."""
-    if "EMA" not in combo or "VWAP" not in combo:
-        return
-
+) -> tuple[dict[str, Any], pl.DataFrame]:
+    """Collect detailed VWAP diagnostics for EMA/VWAP investigations."""
     ema_signal = registry["EMA"].signal(enriched).fill_null(False)
     vwap_signal = registry["VWAP"].signal(enriched).fill_null(False)
     filtered_signal = ema_signal & vwap_signal
 
-    ema_count = int(ema_signal.sum())
-    vwap_count = int(vwap_signal.sum())
-    filtered_count = int(filtered_signal.sum())
-    bars = enriched.height
-    vwap_pct = (vwap_count / bars * 100.0) if bars > 0 else 0.0
+    stats = {
+        "first_20_vwap_values": enriched.select("vwap").head(20)["vwap"].to_list(),
+        "min_vwap": enriched.select(pl.col("vwap").min()).item(),
+        "max_vwap": enriched.select(pl.col("vwap").max()).item(),
+        "null_vwap_values": int(enriched["vwap"].null_count()),
+        "close_above_vwap_bars": int((pl.col("close") > pl.col("vwap")).cast(pl.Int64).sum().fill_null(0)),
+        "close_below_vwap_bars": int((pl.col("close") < pl.col("vwap")).cast(pl.Int64).sum().fill_null(0)),
+        "bullish_vwap_signals": int(vwap_signal.sum()),
+        "bearish_vwap_signals": int((pl.Series(~vwap_signal) & enriched["vwap"].is_not_null()).sum()),
+        "ema_crossover_count_before_filtering": int(ema_signal.sum()),
+        "signals_before_vwap_filter": int(ema_signal.sum()),
+        "signals_after_vwap_filter": int(filtered_signal.sum()),
+    }
+    ema_samples = (
+        enriched.with_columns(
+            [
+                ema_signal.alias("ema_condition"),
+                vwap_signal.alias("vwap_condition"),
+            ]
+        )
+        .filter(pl.col("ema_condition"))
+        .select(["timestamp", "close", "vwap", "ema_condition", "vwap_condition"])
+        .head(20)
+    )
+    return stats, ema_samples
+
+
+def _log_vwap_diagnostics(
+    enriched: pl.DataFrame,
+    combo_label: str,
+    registry: dict[str, Factor],
+) -> None:
+    """Log detailed VWAP diagnostics for the first EMA/VWAP combination."""
+    stats, ema_samples = _collect_vwap_diagnostics(enriched, registry)
 
     logger.info(
-        "VWAP diagnostics (%s): vwap_bullish=%d (%.2f%% bars), ema_signals_before=%d, after_vwap=%d",
+        "VWAP diagnostics (%s): first_20_vwap_values=%s, min_vwap=%s, max_vwap=%s, null_vwap_values=%d",
         combo_label,
-        vwap_count,
-        vwap_pct,
-        ema_count,
-        filtered_count,
+        stats["first_20_vwap_values"],
+        stats["min_vwap"],
+        stats["max_vwap"],
+        stats["null_vwap_values"],
+    )
+    logger.info(
+        "VWAP signal stats (%s): close_above_vwap_bars=%d, close_below_vwap_bars=%d, bullish_vwap_signals=%d, bearish_vwap_signals=%d",
+        combo_label,
+        stats["close_above_vwap_bars"],
+        stats["close_below_vwap_bars"],
+        stats["bullish_vwap_signals"],
+        stats["bearish_vwap_signals"],
+    )
+    logger.info(
+        "EMA/VWAP filter stats (%s): ema_crossover_count_before_filtering=%d, signals_before_vwap_filter=%d, signals_after_vwap_filter=%d",
+        combo_label,
+        stats["ema_crossover_count_before_filtering"],
+        stats["signals_before_vwap_filter"],
+        stats["signals_after_vwap_filter"],
+    )
+    logger.info(
+        "First 20 EMA signals with VWAP conditions (%s): %s",
+        combo_label,
+        ema_samples.to_dicts(),
     )
 
 
