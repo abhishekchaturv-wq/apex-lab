@@ -41,6 +41,8 @@ _SUSPICIOUS_PENALTY_NOT_ROBUST = 0.30
 
 _COMPLEXITY_PENALTY_PER_EXTRA_FEATURE = 0.02
 _REPRESENTATIVE_SIMILARITY_THRESHOLD = 0.85
+_DIVERSITY_ZERO_THRESHOLD = 0.85
+_DIVERSITY_MODERATE_THRESHOLD = 0.50
 
 EPSILON = 1e-12
 
@@ -109,9 +111,9 @@ def _diversity_score(metrics: dict[str, float]) -> float:
 
     if cluster_overlap <= EPSILON and shared_ratio <= EPSILON:
         return 1.0
-    if similarity >= 0.85:
+    if similarity >= _DIVERSITY_ZERO_THRESHOLD:
         return 0.0
-    if similarity >= 0.50 or cluster_overlap >= 0.50:
+    if similarity >= _DIVERSITY_MODERATE_THRESHOLD or cluster_overlap >= _DIVERSITY_MODERATE_THRESHOLD:
         return 0.40
     return 0.75
 
