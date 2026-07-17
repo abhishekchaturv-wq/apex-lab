@@ -12,11 +12,18 @@ from apex_lab.research.signal_patterns.candidate_generator import (
     CandidateGeneratorConfig,
     generate_candidates,
 )
+from apex_lab.research.signal_patterns.diversity import (
+    FeatureDiversityAnalysis,
+    analyze_feature_diversity,
+)
 from apex_lab.research.signal_patterns.evaluator import (
     DEFAULT_TARGET,
     evaluate_all_candidates,
 )
-from apex_lab.research.signal_patterns.ranking import rank_signals, walk_forward_validate
+from apex_lab.research.signal_patterns.ranking import (
+    build_ranking_artifacts,
+    walk_forward_validate,
+)
 from apex_lab.research.signal_patterns.report import build_summary_payload, write_reports
 
 DEFAULT_OUTPUT_DIR = Path("reports/lab/signal_patterns")
@@ -31,8 +38,11 @@ class SignalPatternsResult:
     """Result bundle produced by the signal patterns engine."""
 
     ranked_signals: pl.DataFrame
+    all_ranked_signals: pl.DataFrame
     candidate_statistics: pl.DataFrame
     walkforward_validation: pl.DataFrame
+    rule_similarity: pl.DataFrame
+    feature_diversity: FeatureDiversityAnalysis
     summary: dict[str, Any]
 
 
@@ -70,6 +80,7 @@ def run_signal_patterns(
     """
     dataset = pl.read_parquet(dataset_path)
     feature_importance = _load_feature_importance(feature_ranking_path)
+    feature_diversity = analyze_feature_diversity(dataset, feature_importance)
 
     # 1. Generate candidate rules from top features.
     candidates = generate_candidates(dataset, feature_importance, config=generator_config)
@@ -84,22 +95,40 @@ def run_signal_patterns(
         dataset, candidates, target_column=target_column
     )
 
-    # 4. Rank signals with composite score.
-    ranked = rank_signals(candidate_stats, wf)
+    # 4. Rank signals with diversity-aware composite score.
+    ranking_artifacts = build_ranking_artifacts(
+        candidate_stats,
+        wf,
+        feature_to_cluster=feature_diversity.feature_to_cluster,
+    )
+    ranked = ranking_artifacts.ranked_signals
 
     # 5. Build summary payload and write reports.
-    summary = build_summary_payload(ranked, wf, candidate_stats)
+    summary = build_summary_payload(
+        ranked,
+        wf,
+        candidate_stats,
+        all_ranked=ranking_artifacts.all_ranked_signals,
+        feature_diversity=feature_diversity,
+        rule_similarity=ranking_artifacts.rule_similarity,
+    )
     write_reports(
         output_dir=output_dir,
         ranked=ranked,
+        all_ranked=ranking_artifacts.all_ranked_signals,
         candidate_stats=candidate_stats,
         wf=wf,
         summary=summary,
+        feature_diversity=feature_diversity,
+        rule_similarity=ranking_artifacts.rule_similarity,
     )
 
     return SignalPatternsResult(
         ranked_signals=ranked,
+        all_ranked_signals=ranking_artifacts.all_ranked_signals,
         candidate_statistics=candidate_stats,
         walkforward_validation=wf,
+        rule_similarity=ranking_artifacts.rule_similarity,
+        feature_diversity=feature_diversity,
         summary=summary,
     )
