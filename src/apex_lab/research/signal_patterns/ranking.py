@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import heapq
 import math
 from collections import defaultdict
 from dataclasses import dataclass
@@ -43,6 +44,7 @@ _COMPLEXITY_PENALTY_PER_EXTRA_FEATURE = 0.02
 _REPRESENTATIVE_SIMILARITY_THRESHOLD = 0.85
 _DIVERSITY_ZERO_THRESHOLD = 0.85
 _DIVERSITY_MODERATE_THRESHOLD = 0.50
+_SIMILARITY_REPORT_TOP_K = 10
 _DEFAULT_SIMILARITY_METRICS = {
     "jaccard_similarity": 0.0,
     "cluster_overlap": 0.0,
@@ -395,41 +397,22 @@ def _build_base_ranking(stats: pl.DataFrame, wf: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def _build_rule_similarity_lookup(
+def _select_representatives(
     ranked: pl.DataFrame,
+    feature_lists: list[tuple[str, ...]],
     feature_to_cluster: dict[str, str],
-) -> tuple[dict[tuple[int, int], dict[str, float]], list[tuple[str, ...]]]:
-    feature_lists = [_parse_feature_list(str(value)) for value in ranked.get_column("features").to_list()]
-    lookup: dict[tuple[int, int], dict[str, float]] = {}
+) -> tuple[dict[int, str], dict[int, str], set[int]]:
+    """Build similarity groups and pick representatives without a pre-built all-pairs lookup."""
+    row_dicts = ranked.to_dicts()
+    adjacency: dict[int, set[int]] = defaultdict(set)
+
     for left_index in range(len(feature_lists)):
         for right_index in range(left_index + 1, len(feature_lists)):
-            lookup[(left_index, right_index)] = _rule_similarity_metrics(
+            metrics = _rule_similarity_metrics(
                 feature_lists[left_index],
                 feature_lists[right_index],
                 feature_to_cluster,
             )
-    return lookup, feature_lists
-
-
-def _pair_metrics(
-    left_index: int,
-    right_index: int,
-    lookup: dict[tuple[int, int], dict[str, float]],
-) -> dict[str, float]:
-    key = (left_index, right_index) if left_index < right_index else (right_index, left_index)
-    return lookup.get(key, _DEFAULT_SIMILARITY_METRICS)
-
-
-def _select_representatives(
-    ranked: pl.DataFrame,
-    similarity_lookup: dict[tuple[int, int], dict[str, float]],
-) -> tuple[dict[int, str], dict[int, str], set[int]]:
-    row_dicts = ranked.to_dicts()
-    adjacency: dict[int, set[int]] = defaultdict(set)
-
-    for left_index in range(len(row_dicts)):
-        for right_index in range(left_index + 1, len(row_dicts)):
-            metrics = _pair_metrics(left_index, right_index, similarity_lookup)
             if metrics["similarity_score"] >= _REPRESENTATIVE_SIMILARITY_THRESHOLD:
                 adjacency[left_index].add(right_index)
                 adjacency[right_index].add(left_index)
@@ -472,8 +455,10 @@ def _select_representatives(
 
 def _rerank_with_diversity(
     ranked: pl.DataFrame,
-    similarity_lookup: dict[tuple[int, int], dict[str, float]],
+    feature_lists: list[tuple[str, ...]],
+    feature_to_cluster: dict[str, str],
 ) -> pl.DataFrame:
+    """Greedy diversity re-ranking that computes similarities incrementally (O(N) memory)."""
     if ranked.is_empty():
         return ranked
 
@@ -514,7 +499,11 @@ def _rerank_with_diversity(
         remaining.remove(chosen)
 
         for index in remaining:
-            pair_metrics = _pair_metrics(index, chosen, similarity_lookup)
+            pair_metrics = _rule_similarity_metrics(
+                feature_lists[index],
+                feature_lists[chosen],
+                feature_to_cluster,
+            )
             current_metrics = strongest_metrics[index]
             if (
                 pair_metrics["similarity_score"],
@@ -552,7 +541,9 @@ def _rerank_with_diversity(
 def _build_rule_similarity_report(
     ranked: pl.DataFrame,
     feature_to_cluster: dict[str, str],
+    top_k: int = _SIMILARITY_REPORT_TOP_K,
 ) -> pl.DataFrame:
+    """Report the top-K most similar neighbours per rule (O(N×K) rows, not O(N²))."""
     if ranked.is_empty() or "is_robust" not in ranked.columns:
         return _empty_rule_similarity_frame()
 
@@ -560,21 +551,62 @@ def _build_rule_similarity_report(
     if robust.height < 2:
         return _empty_rule_similarity_frame()
 
-    lookup, feature_lists = _build_rule_similarity_lookup(robust, feature_to_cluster)
-    labels = robust.get_column("rule_label").to_list()
+    feature_lists = [_parse_feature_list(str(v)) for v in robust.get_column("features").to_list()]
+    labels = [str(v) for v in robust.get_column("rule_label").to_list()]
+    n = len(feature_lists)
+    k = min(top_k, n - 1)
+
+    # Per-rule min-heaps of size k, keyed by (score, neighbor_label, ...).
+    # heap[0] is the LOWEST-score entry – the one we would evict.
+    # We update both sides of each pair in a single O(N²/2) scan.
+    HeapEntry = tuple  # (score: float, neighbor_label: str, neighbor_index: int, m_tuple: tuple)
+    heaps: list[list] = [[] for _ in range(n)]
+
+    def _push(heap: list, score: float, neighbor_label: str, neighbor_index: int, m_tuple: tuple) -> None:
+        entry: HeapEntry = (score, neighbor_label, neighbor_index, m_tuple)
+        if len(heap) < k:
+            heapq.heappush(heap, entry)
+        elif score > heap[0][0]:
+            heapq.heapreplace(heap, entry)
+
+    for left_index in range(n):
+        for right_index in range(left_index + 1, n):
+            metrics = _rule_similarity_metrics(
+                feature_lists[left_index],
+                feature_lists[right_index],
+                feature_to_cluster,
+            )
+            score = metrics["similarity_score"]
+            m_tuple = (
+                metrics["jaccard_similarity"],
+                metrics["cluster_overlap"],
+                metrics["shared_feature_ratio"],
+                score,
+            )
+            _push(heaps[left_index], score, labels[right_index], right_index, m_tuple)
+            _push(heaps[right_index], score, labels[left_index], left_index, m_tuple)
+
+    seen_pairs: set[tuple[str, str]] = set()
     rows: list[dict[str, object]] = []
 
-    for left_index in range(len(feature_lists)):
-        for right_index in range(left_index + 1, len(feature_lists)):
-            metrics = lookup[(left_index, right_index)]
+    for rule_index in range(n):
+        for score, neighbor_label, _neighbor_index, m_tuple in sorted(
+            heaps[rule_index], key=lambda x: (-x[0], x[1])
+        ):
+            left_label, right_label = sorted([labels[rule_index], neighbor_label])
+            pair_key = (left_label, right_label)
+            if pair_key in seen_pairs:
+                continue
+            seen_pairs.add(pair_key)
+            jaccard, cluster_overlap, shared_ratio, sim_score = m_tuple
             rows.append(
                 {
-                    "rule_label_left": labels[left_index],
-                    "rule_label_right": labels[right_index],
-                    "jaccard_similarity": round(metrics["jaccard_similarity"], 6),
-                    "cluster_overlap": round(metrics["cluster_overlap"], 6),
-                    "shared_feature_ratio": round(metrics["shared_feature_ratio"], 6),
-                    "similarity_score": round(metrics["similarity_score"], 6),
+                    "rule_label_left": left_label,
+                    "rule_label_right": right_label,
+                    "jaccard_similarity": round(jaccard, 6),
+                    "cluster_overlap": round(cluster_overlap, 6),
+                    "shared_feature_ratio": round(shared_ratio, 6),
+                    "similarity_score": round(sim_score, 6),
                 }
             )
 
@@ -603,10 +635,14 @@ def build_ranking_artifacts(
             rule_similarity=empty,
         )
 
-    similarity_lookup, _ = _build_rule_similarity_lookup(base_ranked, cluster_map)
+    feature_lists = [
+        _parse_feature_list(str(v)) for v in base_ranked.get_column("features").to_list()
+    ]
+
     group_ids, representatives, representative_indexes = _select_representatives(
         base_ranked,
-        similarity_lookup,
+        feature_lists,
+        cluster_map,
     )
 
     all_ranked = base_ranked.with_columns(
@@ -629,9 +665,15 @@ def build_ranking_artifacts(
         ]
     )
 
+    # Extract feature lists for representative rules, preserving their order in base_ranked.
+    rep_feature_lists = [
+        feature_lists[i] for i in range(base_ranked.height) if i in representative_indexes
+    ]
+
     representative_ranked = _rerank_with_diversity(
         all_ranked.filter(pl.col("is_representative_rule")),
-        similarity_lookup,
+        rep_feature_lists,
+        cluster_map,
     )
     representative_ranked = representative_ranked.select(_ranking_output_columns())
 

@@ -529,3 +529,69 @@ def test_research_lab_signal_patterns_wrapper(tmp_path: Path) -> None:
     assert (output_dir / "summary.json").exists()
     assert "top_20_signals" in summary
     assert "recommended_pine_rules" in summary
+
+
+# ---------------------------------------------------------------------------
+# Scalability regression tests – prevent eager O(N²) all-pairs computation
+# ---------------------------------------------------------------------------
+
+
+def test_no_eager_all_pairs_lookup_function_removed() -> None:
+    """The O(N²) dictionary builder must no longer exist in the ranking module."""
+    from apex_lab.research.signal_patterns import ranking
+
+    assert not hasattr(ranking, "_build_rule_similarity_lookup"), (
+        "_build_rule_similarity_lookup builds an O(N²) dict and must not exist; "
+        "similarities must be computed lazily."
+    )
+
+
+def test_similarity_report_bounded_by_top_k() -> None:
+    """Similarity report rows must be at most N * top_k, not O(N²)."""
+    from apex_lab.research.signal_patterns.ranking import (
+        _SIMILARITY_REPORT_TOP_K,
+        build_ranking_artifacts,
+    )
+
+    # Build 30 distinct rules (all sharing one common feature so all pairs have sim > 0).
+    n = 30
+    rule_rows = [
+        {
+            "rule_label": f"feature_{i} == bucket AND base == val",
+            "features": f"['feature_{i}', 'base']",
+            "conditions": f"['feature_{i} == bucket', 'base == val']",
+            "combination_size": 2,
+            "signal_frequency": 50 + i,
+            "win_rate": 0.55 + 0.001 * i,
+            "average_return": 0.20 + 0.001 * i,
+            "median_return": 0.18 + 0.001 * i,
+            "profit_factor": 1.5 + 0.01 * i,
+            "expectancy": 0.15 + 0.001 * i,
+            "average_mfe": 0.30 + 0.001 * i,
+            "average_mae": -0.12 - 0.001 * i,
+        }
+        for i in range(n)
+    ]
+    stats = pl.DataFrame(rule_rows)
+    wf = pl.DataFrame(
+        {
+            "rule_label": [r["rule_label"] for r in rule_rows],
+            "is_robust": [True] * n,
+            "train_expectancy": [0.14] * n,
+            "val_expectancy": [0.13] * n,
+            "oos_expectancy": [0.12] * n,
+        }
+    )
+
+    artifacts = build_ranking_artifacts(stats, wf)
+
+    all_pairs_count = n * (n - 1) // 2  # 435 for n=30
+    max_top_k_pairs = n * _SIMILARITY_REPORT_TOP_K  # 300 for n=30, top_k=10
+    assert artifacts.rule_similarity.height <= max_top_k_pairs, (
+        f"Similarity report has {artifacts.rule_similarity.height} rows; "
+        f"expected at most {max_top_k_pairs} (n={n}, top_k={_SIMILARITY_REPORT_TOP_K})"
+    )
+    assert artifacts.rule_similarity.height < all_pairs_count, (
+        f"Similarity report materialised all {all_pairs_count} pairs – "
+        "this is the O(N²) regression the fix was designed to prevent."
+    )
