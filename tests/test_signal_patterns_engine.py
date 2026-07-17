@@ -24,6 +24,8 @@ from apex_lab.research.signal_patterns.ranking import (
 from apex_lab.research.signal_patterns.report import build_summary_payload, write_reports
 
 _SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "research_lab.py"
+_CLONE_SIGNAL_SCALE = 1.01
+_CLONE_NOISE_WEIGHT = 0.01
 
 
 def _load_script_module() -> ModuleType:
@@ -88,7 +90,7 @@ def _make_signal_dataset(rows: int = 400) -> pl.DataFrame:
             "opening_range": opening_range,
             "noise_feature": noise,
             "ema_signal_clone": [
-                (signal * 1.01) + (0.01 * noise_value)
+                (signal * _CLONE_SIGNAL_SCALE) + (_CLONE_NOISE_WEIGHT * noise_value)
                 for signal, noise_value in zip(signal_strength, noise, strict=True)
             ],
             "price_proxy": [100.25 + (i * 0.1) + (0.01 * noise[i]) for i in range(rows)],

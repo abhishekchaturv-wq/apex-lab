@@ -17,7 +17,7 @@ def _sanitize(value: Any) -> Any:
     if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
         return None
     if isinstance(value, dict):
-        return {dict_key: _sanitize(dict_value) for dict_key, dict_value in value.items()}
+        return {key: _sanitize(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_sanitize(item) for item in value]
     return value

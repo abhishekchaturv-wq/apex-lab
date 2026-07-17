@@ -134,6 +134,18 @@ def _detect_suspicious_rules(
     return flags
 
 
+def _representative_sort_key(row: dict[str, Any]) -> tuple[int, float, int, float, int, float, str]:
+    return (
+        -int(bool(row["is_robust"])),
+        -float(row.get("_wf_stability") or 0.0),
+        -int(row["signal_frequency"]),
+        -float(row["expectancy"]),
+        int(row["combination_size"]),
+        -float(row["base_composite_score"]),
+        str(row["rule_label"]),
+    )
+
+
 def walk_forward_validate(
     df: pl.DataFrame,
     candidates: list[CandidateRule],
@@ -217,7 +229,8 @@ def walk_forward_validate(
         if is_robust and len(split_win_rates) == 3:
             wr_mean = sum(split_win_rates) / 3.0
             wr_var = sum((value - wr_mean) ** 2 for value in split_win_rates) / 3.0
-            if math.sqrt(wr_var) > _MAX_WIN_RATE_STD:
+            wr_std = math.sqrt(wr_var)
+            if wr_std > _MAX_WIN_RATE_STD:
                 is_robust = False
 
         if is_robust and len(split_expectancies) == 3:
@@ -443,18 +456,7 @@ def _select_representatives(
 
     for position, component in enumerate(components, start=1):
         group_id = f"group_{position:03d}"
-        best_index = sorted(
-            component,
-            key=lambda index: (
-                -int(bool(row_dicts[index]["is_robust"])),
-                -float(row_dicts[index].get("_wf_stability") or 0.0),
-                -int(row_dicts[index]["signal_frequency"]),
-                -float(row_dicts[index]["expectancy"]),
-                int(row_dicts[index]["combination_size"]),
-                -float(row_dicts[index]["base_composite_score"]),
-                str(row_dicts[index]["rule_label"]),
-            ),
-        )[0]
+        best_index = sorted(component, key=lambda index: _representative_sort_key(row_dicts[index]))[0]
         representative_indexes.add(best_index)
         representative_label = str(row_dicts[best_index]["rule_label"])
         for index in component:
@@ -477,26 +479,20 @@ def _rerank_with_diversity(
     adjusted_scores: dict[int, float] = {}
     diversity_scores: dict[int, float] = {}
     max_similarities: dict[int, float] = {}
+    strongest_metrics: dict[int, dict[str, float]] = {
+        index: {
+            "jaccard_similarity": 0.0,
+            "cluster_overlap": 0.0,
+            "shared_feature_ratio": 0.0,
+            "similarity_score": 0.0,
+        }
+        for index in remaining
+    }
 
     while remaining:
         scored_candidates: list[tuple[float, float, float, str, int]] = []
         for index in remaining:
-            if not selected:
-                metrics = {
-                    "jaccard_similarity": 0.0,
-                    "cluster_overlap": 0.0,
-                    "shared_feature_ratio": 0.0,
-                    "similarity_score": 0.0,
-                }
-            else:
-                metrics = max(
-                    (_pair_metrics(index, other, similarity_lookup) for other in selected),
-                    key=lambda item: (
-                        item["similarity_score"],
-                        item["cluster_overlap"],
-                        item["shared_feature_ratio"],
-                    ),
-                )
+            metrics = strongest_metrics[index]
             diversity = _diversity_score(metrics)
             base_score = float(row_dicts[index]["base_composite_score"])
             adjusted = base_score * diversity
@@ -517,6 +513,20 @@ def _rerank_with_diversity(
         chosen = scored_candidates[0][4]
         selected.append(chosen)
         remaining.remove(chosen)
+
+        for index in remaining:
+            pair_metrics = _pair_metrics(index, chosen, similarity_lookup)
+            current_metrics = strongest_metrics[index]
+            if (
+                pair_metrics["similarity_score"],
+                pair_metrics["cluster_overlap"],
+                pair_metrics["shared_feature_ratio"],
+            ) > (
+                current_metrics["similarity_score"],
+                current_metrics["cluster_overlap"],
+                current_metrics["shared_feature_ratio"],
+            ):
+                strongest_metrics[index] = pair_metrics
 
     ordered = ranked[selected].with_columns(
         [
