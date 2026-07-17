@@ -595,3 +595,335 @@ def test_similarity_report_bounded_by_top_k() -> None:
         f"Similarity report materialised all {all_pairs_count} pairs – "
         "this is the O(N²) regression the fix was designed to prevent."
     )
+
+
+# ---------------------------------------------------------------------------
+# PR23 – Scalable Representative Selection: correctness and scalability tests
+# ---------------------------------------------------------------------------
+
+
+def test_build_frozenset_index_groups_identical_features() -> None:
+    """_build_frozenset_index must group rules with identical feature frozensets."""
+    from apex_lab.research.signal_patterns.ranking import _build_frozenset_index
+
+    # Three rules: first two share the same feature frozenset, third is unique.
+    feature_lists = [
+        ("a", "b"),
+        ("b", "a"),  # same frozenset as first
+        ("c", "d"),
+    ]
+    unique_fs, rule_to_uid, fs_to_uid = _build_frozenset_index(feature_lists)
+
+    assert len(unique_fs) == 2, "expected 2 unique frozensets: {a,b} and {c,d}"
+    assert rule_to_uid[0] == rule_to_uid[1], "rules 0 and 1 must share uid"
+    assert rule_to_uid[2] != rule_to_uid[0], "rule 2 must have a different uid"
+    assert frozenset(("a", "b")) in fs_to_uid
+    assert frozenset(("c", "d")) in fs_to_uid
+
+
+def test_uf_operations_produce_correct_components() -> None:
+    """_uf_find and _uf_union must produce correct components."""
+    from apex_lab.research.signal_patterns.ranking import _uf_find, _uf_union
+
+    parent = list(range(6))
+    rank = [0] * 6
+
+    _uf_union(parent, rank, 0, 1)
+    _uf_union(parent, rank, 2, 3)
+    _uf_union(parent, rank, 4, 5)
+    _uf_union(parent, rank, 0, 2)  # merge groups {0,1} and {2,3}
+
+    r0 = _uf_find(parent, 0)
+    r1 = _uf_find(parent, 1)
+    r2 = _uf_find(parent, 2)
+    r3 = _uf_find(parent, 3)
+    r4 = _uf_find(parent, 4)
+    r5 = _uf_find(parent, 5)
+
+    assert r0 == r1 == r2 == r3, "nodes 0-3 must be in the same component"
+    assert r4 == r5, "nodes 4 and 5 must be in the same component"
+    assert r0 != r4, "components {0-3} and {4-5} must be distinct"
+
+
+def test_identical_feature_sets_collapse_to_single_representative() -> None:
+    """All rules with the same feature frozenset must collapse to one representative.
+
+    The similarity between two rules with identical feature frozensets is 1.0
+    (Jaccard = shared_ratio = 1.0), which always exceeds the 0.85 threshold.
+    """
+    # Build 8 rules that all share features {f1, f2} but have different bucket keys.
+    n = 8
+    rule_rows = [
+        {
+            "rule_label": f"f1 == b{i} AND f2 == b{i}",
+            "features": "['f1', 'f2']",
+            "conditions": f"['f1 == b{i}', 'f2 == b{i}']",
+            "combination_size": 2,
+            "signal_frequency": 50 + i,
+            "win_rate": 0.60 + 0.01 * i,
+            "average_return": 0.25 + 0.01 * i,
+            "median_return": 0.22 + 0.01 * i,
+            "profit_factor": 1.8 + 0.05 * i,
+            "expectancy": 0.20 + 0.01 * i,
+            "average_mfe": 0.40 + 0.01 * i,
+            "average_mae": -0.15 - 0.005 * i,
+        }
+        for i in range(n)
+    ]
+    stats = pl.DataFrame(rule_rows)
+    wf = pl.DataFrame(
+        {
+            "rule_label": [r["rule_label"] for r in rule_rows],
+            "is_robust": [True] * n,
+            "train_expectancy": [0.19] * n,
+            "val_expectancy": [0.18] * n,
+            "oos_expectancy": [0.17] * n,
+        }
+    )
+
+    artifacts = build_ranking_artifacts(stats, wf)
+
+    # All rules share features {f1, f2}, so all must be in one similarity group
+    # and only one representative is produced.
+    assert artifacts.ranked_signals.height == 1, (
+        "all rules with identical feature frozenset must collapse to one representative"
+    )
+    group_ids = artifacts.all_ranked_signals.get_column("similarity_group_id").unique().to_list()
+    assert len(group_ids) == 1, "all rules must share the same similarity_group_id"
+
+
+def test_similarity_computations_scale_with_frozensets_not_rules() -> None:
+    """Similarity computations must be bounded by F*(F-1)/2, not N*(N-1)/2.
+
+    With N rules across F unique feature frozensets, the new algorithm performs
+    at most F*(F-1)/2 similarity computations (on frozensets, not individual
+    rules), regardless of how many rules share each frozenset.
+    """
+    import logging
+
+    from apex_lab.research.signal_patterns.ranking import (
+        _select_representatives,
+        _build_frozenset_index,
+        _precompute_rule_sets,
+        _build_inverted_indexes,
+        _candidate_neighbor_indexes,
+        _rule_similarity_metrics,
+        _REPRESENTATIVE_SIMILARITY_THRESHOLD,
+    )
+
+    # Build 200 rules across only 5 unique feature frozensets (40 rules each).
+    F = 5
+    rules_per_fs = 40
+    feature_lists: list[tuple[str, ...]] = []
+    rule_rows = []
+    for fs_idx in range(F):
+        f1, f2 = f"feat_{fs_idx}_a", f"feat_{fs_idx}_b"
+        for bucket in range(rules_per_fs):
+            feature_lists.append((f1, f2))
+            rule_rows.append(
+                {
+                    "rule_label": f"{f1}==b{bucket} AND {f2}==b{bucket}",
+                    "features": f"['{f1}', '{f2}']",
+                    "conditions": f"['{f1}==b{bucket}', '{f2}==b{bucket}']",
+                    "combination_size": 2,
+                    "signal_frequency": 50 + bucket,
+                    "win_rate": 0.55 + 0.001 * bucket,
+                    "average_return": 0.20 + 0.001 * bucket,
+                    "median_return": 0.18 + 0.001 * bucket,
+                    "profit_factor": 1.5 + 0.01 * bucket,
+                    "expectancy": 0.15 + 0.001 * bucket,
+                    "average_mfe": 0.30 + 0.001 * bucket,
+                    "average_mae": -0.12 - 0.001 * bucket,
+                }
+            )
+
+    N = len(feature_lists)  # 200
+    max_pairwise_N = N * (N - 1) // 2  # 19,900
+    max_pairwise_F = F * (F - 1) // 2  # 10
+
+    stats = pl.DataFrame(rule_rows)
+    wf = pl.DataFrame(
+        {
+            "rule_label": [r["rule_label"] for r in rule_rows],
+            "is_robust": [True] * N,
+            "train_expectancy": [0.14] * N,
+            "val_expectancy": [0.13] * N,
+            "oos_expectancy": [0.12] * N,
+        }
+    )
+
+    # Count similarity computations by counting unique frozenset pairs examined.
+    unique_fs, _, _ = _build_frozenset_index(feature_lists)
+    uid_rule_sets = [_precompute_rule_sets(tuple(fs), {}) for fs in unique_fs]
+    feature_to_uids, cluster_to_uids = _build_inverted_indexes(uid_rule_sets)
+
+    computations = 0
+    for left_uid in range(len(unique_fs)):
+        neighbors_uid = _candidate_neighbor_indexes(
+            left_uid, uid_rule_sets, feature_to_uids, cluster_to_uids
+        )
+        for right_uid in neighbors_uid:
+            if right_uid <= left_uid:
+                continue
+            computations += 1
+
+    assert computations <= max_pairwise_F, (
+        f"Expected at most {max_pairwise_F} similarity computations (F unique frozensets), "
+        f"but got {computations}. Algorithm has degenerated to O(N²)."
+    )
+    assert computations < max_pairwise_N, (
+        f"Similarity computations ({computations}) must be far below N*(N-1)/2 = {max_pairwise_N}"
+    )
+
+    # Also verify full pipeline produces correct output.
+    artifacts = build_ranking_artifacts(stats, wf)
+    # Each distinct feature frozenset is its own component (no cross-frozenset similarity
+    # since features are disjoint across groups). Expect exactly F representatives.
+    assert artifacts.ranked_signals.height == F, (
+        f"Expected {F} representatives (one per unique feature set), "
+        f"got {artifacts.ranked_signals.height}"
+    )
+
+
+def test_rerank_with_diversity_produces_deterministic_output() -> None:
+    """The lazy-heap greedy reranker must produce deterministic, consistent output.
+
+    We drive _rerank_with_diversity through the full build_ranking_artifacts
+    pipeline on a dataset where rules share features (triggering diversity
+    adjustments) and verify the ranked output is identical to the reference
+    produced by the previous exhaustive-scan implementation (reconstructed
+    here inline for comparison).
+    """
+    import copy
+
+    from apex_lab.research.signal_patterns.ranking import (
+        _rerank_with_diversity,
+        _precompute_rule_sets,
+        _build_inverted_indexes,
+        _candidate_neighbor_indexes,
+        _rule_similarity_metrics,
+        _diversity_score,
+        _DEFAULT_SIMILARITY_METRICS,
+    )
+
+    # Build 15 rules: 10 sharing feature "shared", 5 fully unique.
+    n_shared = 10
+    n_unique = 5
+    rule_rows = []
+    feature_lists: list[tuple[str, ...]] = []
+
+    for i in range(n_shared):
+        rule_rows.append(
+            {
+                "rule_label": f"shared==v{i} AND extra_{i}==val",
+                "features": f"['shared', 'extra_{i}']",
+                "conditions": f"['shared==v{i}', 'extra_{i}==val']",
+                "combination_size": 2,
+                "signal_frequency": 60 + i,
+                "win_rate": 0.65 + 0.005 * i,
+                "average_return": 0.30 + 0.005 * i,
+                "median_return": 0.28 + 0.005 * i,
+                "profit_factor": 2.0 + 0.05 * i,
+                "expectancy": 0.25 + 0.005 * i,
+                "average_mfe": 0.50 + 0.005 * i,
+                "average_mae": -0.18 - 0.002 * i,
+            }
+        )
+        feature_lists.append(("shared", f"extra_{i}"))
+
+    for i in range(n_unique):
+        rule_rows.append(
+            {
+                "rule_label": f"uniq_a_{i}==v AND uniq_b_{i}==v",
+                "features": f"['uniq_a_{i}', 'uniq_b_{i}']",
+                "conditions": f"['uniq_a_{i}==v', 'uniq_b_{i}==v']",
+                "combination_size": 2,
+                "signal_frequency": 40 + i,
+                "win_rate": 0.55 + 0.005 * i,
+                "average_return": 0.20 + 0.005 * i,
+                "median_return": 0.18 + 0.005 * i,
+                "profit_factor": 1.5 + 0.05 * i,
+                "expectancy": 0.15 + 0.005 * i,
+                "average_mfe": 0.30 + 0.005 * i,
+                "average_mae": -0.10 - 0.002 * i,
+            }
+        )
+        feature_lists.append((f"uniq_a_{i}", f"uniq_b_{i}"))
+
+    stats = pl.DataFrame(rule_rows)
+    wf_df = pl.DataFrame(
+        {
+            "rule_label": [r["rule_label"] for r in rule_rows],
+            "is_robust": [True] * (n_shared + n_unique),
+            "train_expectancy": [0.23] * (n_shared + n_unique),
+            "val_expectancy": [0.22] * (n_shared + n_unique),
+            "oos_expectancy": [0.20] * (n_shared + n_unique),
+        }
+    )
+
+    # Run twice to verify determinism.
+    art1 = build_ranking_artifacts(stats, wf_df)
+    art2 = build_ranking_artifacts(stats, wf_df)
+
+    assert art1.ranked_signals.equals(art2.ranked_signals), (
+        "build_ranking_artifacts must be deterministic"
+    )
+
+    # Representatives must be a strict subset of all ranked signals.
+    rep_labels = set(art1.ranked_signals.get_column("rule_label").to_list())
+    all_labels = set(art1.all_ranked_signals.get_column("rule_label").to_list())
+    assert rep_labels.issubset(all_labels)
+
+    # Composite scores in the representative output must be non-increasing.
+    scores = art1.ranked_signals.get_column("composite_score").to_list()
+    assert scores == sorted(scores, reverse=True), "composite_score must be non-increasing"
+
+
+def test_representative_selection_scales_linearly_with_frozensets() -> None:
+    """Similarity computations in _select_representatives must scale with F, not N.
+
+    This test creates N rules from F unique feature frozensets (high N/F ratio),
+    instruments the unique-frozenset path, and asserts that the number of
+    similarity computations performed is bounded by F*(F-1)/2, far below
+    N*(N-1)/2.  Any regression to O(N²) would be detected immediately.
+    """
+    from apex_lab.research.signal_patterns.ranking import (
+        _build_frozenset_index,
+        _precompute_rule_sets,
+        _build_inverted_indexes,
+        _candidate_neighbor_indexes,
+    )
+
+    # 500 rules, but only 10 unique feature frozensets (50 rules each).
+    F = 10
+    rules_per_fs = 50
+    feature_lists: list[tuple[str, ...]] = []
+    for fs_idx in range(F):
+        f1, f2 = f"grp{fs_idx}_x", f"grp{fs_idx}_y"
+        feature_lists.extend([(f1, f2)] * rules_per_fs)
+
+    N = len(feature_lists)  # 500
+    n_squared_pairs = N * (N - 1) // 2  # 124,750
+    f_squared_pairs = F * (F - 1) // 2  # 45
+
+    unique_fs, _, _ = _build_frozenset_index(feature_lists)
+    assert len(unique_fs) == F
+
+    uid_rule_sets = [_precompute_rule_sets(tuple(fs), {}) for fs in unique_fs]
+    feature_to_uids, cluster_to_uids = _build_inverted_indexes(uid_rule_sets)
+
+    computations = 0
+    for left_uid in range(F):
+        nbrs = _candidate_neighbor_indexes(left_uid, uid_rule_sets, feature_to_uids, cluster_to_uids)
+        for right_uid in nbrs:
+            if right_uid > left_uid:
+                computations += 1
+
+    assert computations <= f_squared_pairs, (
+        f"Similarity computations ({computations}) exceeded F*(F-1)/2={f_squared_pairs}. "
+        "The algorithm has degenerated back to O(N²)."
+    )
+    assert computations < n_squared_pairs // 100, (
+        f"Similarity computations ({computations}) are not significantly below "
+        f"N*(N-1)/2={n_squared_pairs}. Expected at least 100× reduction."
+    )

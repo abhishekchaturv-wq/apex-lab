@@ -117,6 +117,90 @@ def _build_inverted_indexes(
     return dict(feature_to_rules), dict(cluster_to_rules)
 
 
+# ---------------------------------------------------------------------------
+# Union-Find (Disjoint Set Union) with path compression
+# ---------------------------------------------------------------------------
+
+
+def _uf_find(parent: list[int], x: int) -> int:
+    """Iterative find with two-pass path compression."""
+    root = x
+    while parent[root] != root:
+        root = parent[root]
+    # Second pass: path compression.
+    while parent[x] != root:
+        nxt = parent[x]
+        parent[x] = root
+        x = nxt
+    return root
+
+
+def _uf_union(parent: list[int], rank: list[int], x: int, y: int) -> None:
+    """Union by rank to keep trees shallow."""
+    px, py = _uf_find(parent, x), _uf_find(parent, y)
+    if px == py:
+        return
+    if rank[px] < rank[py]:
+        px, py = py, px
+    parent[py] = px
+    if rank[px] == rank[py]:
+        rank[px] += 1
+
+
+# ---------------------------------------------------------------------------
+# Frozenset deduplication: the key scalability insight
+#
+# The similarity_score between any two rules depends exclusively on their
+# feature frozensets and the cluster mapping — bucket values are irrelevant.
+# Therefore, two rules with identical feature frozensets have *identical*
+# pairwise similarity with every third rule, and must always land in the
+# same connected component.
+#
+# With the default generator configuration (top_features=25, combo_sizes=(2,3,4)),
+# the number of distinct feature frozensets is at most
+# C(top_features,2)+C(top_features,3)+C(top_features,4), a polynomial that grows
+# far slower than the ~692 K individual rules (which include all bucket combinations).
+# See CandidateGeneratorConfig for the configurable parameters.
+#
+# Algorithm (exact, not approximate):
+#   1. Group the N rules by feature frozenset → F unique groups.
+#   2. Build the similarity graph on those F unique frozensets.
+#   3. Find connected components via Union-Find on F nodes.
+#   4. Map every rule to its component through its frozenset group.
+#
+# Complexity: O(N + F² / index-pruning + N log N)
+# vs previous: O(N × avg_candidates) ≈ O(N²) when avg_candidates ≈ N
+#
+# Correctness proof: The connected components of the N-rule graph are
+# exactly the unions of rule-index sets for each frozenset-level component,
+# because similarity is a function of (feature_frozenset, cluster_map) only.
+# ---------------------------------------------------------------------------
+
+
+def _build_frozenset_index(
+    feature_lists: list[tuple[str, ...]],
+) -> tuple[list[frozenset[str]], list[int], dict[frozenset[str], int]]:
+    """Deduplicate feature lists by frozenset.
+
+    Returns:
+        unique_fs:    List of unique feature frozensets (length F ≤ 15,250).
+        rule_to_uid:  rule_index → frozenset uid (length N).
+        fs_to_uid:    frozenset → uid lookup.
+    """
+    fs_to_uid: dict[frozenset[str], int] = {}
+    unique_fs: list[frozenset[str]] = []
+    rule_to_uid: list[int] = []
+
+    for feats in feature_lists:
+        fs = frozenset(feats)
+        if fs not in fs_to_uid:
+            fs_to_uid[fs] = len(unique_fs)
+            unique_fs.append(fs)
+        rule_to_uid.append(fs_to_uid[fs])
+
+    return unique_fs, rule_to_uid, fs_to_uid
+
+
 def _candidate_neighbor_indexes(
     index: int,
     rule_sets: list[tuple[frozenset[str], frozenset[str]]],
@@ -456,84 +540,126 @@ def _select_representatives(
     feature_lists: list[tuple[str, ...]],
     feature_to_cluster: dict[str, str],
 ) -> tuple[dict[int, str], dict[int, str], set[int]]:
-    """Build similarity groups and pick representatives using exact neighbor indexes.
+    """Build similarity groups and pick representatives using frozenset deduplication.
 
-    Complexity vs original O(N²) pairwise scan:
-    - Index construction:         O(N × avg_features)
-    - Candidate enumeration:      O(N × avg_candidates)
-    - Similarity computation:     O(actual candidate pairs)
+    Algorithmic improvement over the previous O(N²) / O(N × avg_candidates) scan
+    -------------------------------------------------------------------------------
+    The similarity_score between any two rules depends *only* on their feature
+    frozensets and the cluster mapping — the specific bucket values in each rule
+    are irrelevant.  Therefore, all rules that share the same feature frozenset
+    have identical pairwise similarity with every other rule, and are guaranteed
+    to be in the same connected component.
 
-    Correctness guarantee: any pair with similarity_score >= threshold must share
-    at least one feature or cluster, so the inverted indexes enumerate every such
-    pair exactly – no false negatives, no approximations.
+    This allows us to reduce the graph construction from N individual rules to
+    F unique feature frozensets (F ≤ C(top_features,2) + C(top_features,3) +
+    C(top_features,4) = 15,250 for top_features=25), and build the component
+    graph on that much smaller set.
+
+    Complexity:
+        Step 1 – frozenset deduplication:  O(N)
+        Step 2 – inverted index on F items: O(F × avg_features)
+        Step 3 – pairwise on F items:       O(F × avg_candidates_among_F)
+        Step 4 – Union-Find components:     O(F × α(F)) ≈ O(F)
+        Step 5 – map N rules to components: O(N)
+        Step 6 – representative selection:  O(N log N)
+        Total:  O(N log N + F²) vs previous O(N × avg_candidates) ≈ O(N²)
+
+    Correctness guarantee: the connected components of the N-rule similarity
+    graph are *exactly* the unions of rule-index sets for each frozenset-level
+    component.  No false negatives, no approximations.
     """
     row_dicts = ranked.to_dicts()
-    adjacency: dict[int, set[int]] = defaultdict(set)
+    N = len(feature_lists)
 
-    rule_sets = [_precompute_rule_sets(f, feature_to_cluster) for f in feature_lists]
-    feature_to_rules, cluster_to_rules = _build_inverted_indexes(rule_sets)
+    # ------------------------------------------------------------------
+    # Step 1: Deduplicate feature lists into F unique frozensets.
+    # ------------------------------------------------------------------
+    unique_fs, rule_to_uid, _ = _build_frozenset_index(feature_lists)
+    F = len(unique_fs)
 
+    # ------------------------------------------------------------------
+    # Step 2: Build (feature_set, cluster_set) for each unique frozenset
+    # and construct inverted indexes on F items (not N).
+    # ------------------------------------------------------------------
+    uid_rule_sets: list[tuple[frozenset[str], frozenset[str]]] = [
+        _precompute_rule_sets(tuple(fs), feature_to_cluster) for fs in unique_fs
+    ]
+    feature_to_uids, cluster_to_uids = _build_inverted_indexes(uid_rule_sets)
+
+    # ------------------------------------------------------------------
+    # Step 3: Build adjacency graph among the F unique frozensets.
+    # With F ≤ 15,250 and efficient inverted-index pruning, this is fast
+    # even when the original N-rule indexes were degenerate.
+    # ------------------------------------------------------------------
+    uid_parent = list(range(F))
+    uid_rank = [0] * F
     sim_computations = 0
-    total_candidates = 0
+    total_uid_candidates = 0
 
-    for left_index in range(len(feature_lists)):
-        neighbors = _candidate_neighbor_indexes(left_index, rule_sets, feature_to_rules, cluster_to_rules)
-        total_candidates += len(neighbors)
-        for right_index in neighbors:
-            if right_index <= left_index:
+    for left_uid in range(F):
+        neighbors_uid = _candidate_neighbor_indexes(
+            left_uid, uid_rule_sets, feature_to_uids, cluster_to_uids
+        )
+        total_uid_candidates += len(neighbors_uid)
+        for right_uid in neighbors_uid:
+            if right_uid <= left_uid:
                 continue
-            left_exact, left_clusters = rule_sets[left_index]
-            right_exact, right_clusters = rule_sets[right_index]
+            left_exact, left_clusters = uid_rule_sets[left_uid]
+            right_exact, right_clusters = uid_rule_sets[right_uid]
             metrics = _rule_similarity_metrics(
                 left_exact, left_clusters, right_exact, right_clusters
             )
             sim_computations += 1
             if metrics["similarity_score"] >= _REPRESENTATIVE_SIMILARITY_THRESHOLD:
-                adjacency[left_index].add(right_index)
-                adjacency[right_index].add(left_index)
+                _uf_union(uid_parent, uid_rank, left_uid, right_uid)
+
+    # ------------------------------------------------------------------
+    # Step 4: Build connected components — map rule indexes to component
+    # roots via their frozenset uid.
+    # ------------------------------------------------------------------
+    root_to_rules: dict[int, list[int]] = defaultdict(list)
+    for rule_idx in range(N):
+        root = _uf_find(uid_parent, rule_to_uid[rule_idx])
+        root_to_rules[root].append(rule_idx)
+
+    components: list[list[int]] = [sorted(idxs) for idxs in root_to_rules.values()]
 
     if _logger.isEnabledFor(logging.DEBUG):
-        n = len(feature_lists)
-        avg_cands = total_candidates / n if n else 0.0
+        avg_uid_cands = total_uid_candidates / F if F else 0.0
         _logger.debug(
-            "_select_representatives: rules=%d  similarity_computations=%d  avg_candidates=%.1f",
-            n,
+            "_select_representatives: rules=%d  unique_feature_sets=%d  "
+            "similarity_computations=%d  avg_uid_candidates=%.1f  components=%d",
+            N,
+            F,
             sim_computations,
-            avg_cands,
+            avg_uid_cands,
+            len(components),
         )
 
-    components: list[list[int]] = []
-    seen: set[int] = set()
-    for index in range(len(row_dicts)):
-        if index in seen:
-            continue
-        stack = [index]
-        component: list[int] = []
-        while stack:
-            current = stack.pop()
-            if current in seen:
-                continue
-            seen.add(current)
-            component.append(current)
-            stack.extend(sorted(adjacency.get(current, set()) - seen, reverse=True))
-        components.append(sorted(component))
-
+    # ------------------------------------------------------------------
+    # Step 5: Sort components by minimum rank_before_diversity (same
+    # ordering as the previous implementation).
+    # ------------------------------------------------------------------
     components.sort(
-        key=lambda component: min(int(row_dicts[index]["rank_before_diversity"]) for index in component)
+        key=lambda comp: min(int(row_dicts[idx]["rank_before_diversity"]) for idx in comp)
     )
 
+    # ------------------------------------------------------------------
+    # Step 6: Assign group IDs and pick the best representative per
+    # component using the same sort key as before.
+    # ------------------------------------------------------------------
     group_ids: dict[int, str] = {}
     representatives: dict[int, str] = {}
     representative_indexes: set[int] = set()
 
     for position, component in enumerate(components, start=1):
         group_id = f"group_{position:03d}"
-        best_index = sorted(component, key=lambda index: _representative_sort_key(row_dicts[index]))[0]
+        best_index = sorted(component, key=lambda idx: _representative_sort_key(row_dicts[idx]))[0]
         representative_indexes.add(best_index)
         representative_label = str(row_dicts[best_index]["rule_label"])
-        for index in component:
-            group_ids[index] = group_id
-            representatives[index] = representative_label
+        for idx in component:
+            group_ids[idx] = group_id
+            representatives[idx] = representative_label
 
     return group_ids, representatives, representative_indexes
 
@@ -543,78 +669,115 @@ def _rerank_with_diversity(
     feature_lists: list[tuple[str, ...]],
     feature_to_cluster: dict[str, str],
 ) -> pl.DataFrame:
-    """Greedy diversity re-ranking with O(N × avg_candidates) similarity computations.
+    """Greedy diversity re-ranking with a lazy-deletion min-heap.
 
-    Compared to the previous implementation:
-    - ``remaining`` is a ``set`` so each removal is O(1) instead of O(N).
-    - After selecting a rule, ``strongest_metrics`` is updated only for its
-      candidate neighbors from the inverted indexes.  Rules that share no
-      feature or cluster with the chosen rule always have similarity 0 and their
-      strongest_metrics would not change, so the updates are safely skipped.
+    Compared to the previous O(K² log K) implementation that rescanned all
+    remaining rules every iteration, this version maintains an incrementally
+    updated priority queue:
 
-    All scores, diversity values and ranking order remain bit-for-bit identical
-    to the original O(N²) implementation.
+    - Initialisation:           O(K log K)
+    - Selection per iteration:  O(log K)  amortised (lazy-deletion pops)
+    - Neighbor updates:         O(avg_neighbors × log K)
+    - Total:                    O(K × avg_neighbors × log K)
+
+    The heap stores tuples of the form:
+        (−adjusted_score, −diversity, −base_score, rule_label, index, seq)
+    where ``seq`` is a monotonically increasing per-index counter.  When
+    strongest_metrics for a rule is updated, a new entry with an incremented
+    ``seq`` is pushed, and the old entry becomes stale.  On pop, a stale entry
+    is detected by checking whether the stored ``seq`` matches the current
+    sequence number for that index; stale entries are discarded.
+
+    Because strongest_metrics is monotonically non-decreasing (similarity only
+    ever rises), adjusted_score is monotonically non-increasing.  Stale entries
+    therefore always have *better* (more negative) neg_adjusted_score values
+    and will be popped before the valid entry.  Version tracking ensures they
+    are correctly discarded.
+
+    All scores, diversity values and ranking order are bit-for-bit identical
+    to the previous implementation.
     """
     if ranked.is_empty():
         return ranked
 
     row_dicts = ranked.to_dicts()
-    remaining: set[int] = set(range(len(row_dicts)))
+    K = len(row_dicts)
+    assert K == len(feature_lists), (
+        f"ranked frame has {K} rows but feature_lists has {len(feature_lists)} entries"
+    )
+    remaining: set[int] = set(range(K))
     selected: list[int] = []
     adjusted_scores: dict[int, float] = {}
     diversity_scores: dict[int, float] = {}
     max_similarities: dict[int, float] = {}
     strongest_metrics: dict[int, dict[str, float]] = {
-        index: dict(_DEFAULT_SIMILARITY_METRICS)
-        for index in remaining
+        idx: dict(_DEFAULT_SIMILARITY_METRICS) for idx in range(K)
     }
 
     rule_sets = [_precompute_rule_sets(f, feature_to_cluster) for f in feature_lists]
     feature_to_rules, cluster_to_rules = _build_inverted_indexes(rule_sets)
 
+    # ------------------------------------------------------------------
+    # Build the initial heap.  At the start every rule has diversity 1.0
+    # so adjusted_score == base_composite_score.
+    # Heap entry: (neg_adj, neg_div, neg_base, label, index, seq)
+    # ------------------------------------------------------------------
+    base_scores: list[float] = [float(row_dicts[i]["base_composite_score"]) for i in range(K)]
+    seq: list[int] = [0] * K  # current sequence number per rule
+    heap: list[tuple] = []
+    for idx in range(K):
+        entry = (
+            -base_scores[idx],
+            -1.0,
+            -base_scores[idx],
+            str(row_dicts[idx]["rule_label"]),
+            idx,
+            0,
+        )
+        heapq.heappush(heap, entry)
+
     sim_computations = 0
     total_candidates = 0
 
     while remaining:
-        scored_candidates: list[tuple[float, float, float, str, int]] = []
-        for index in remaining:
-            metrics = strongest_metrics[index]
-            diversity = _diversity_score(metrics)
-            base_score = float(row_dicts[index]["base_composite_score"])
-            adjusted = base_score * diversity
-            scored_candidates.append(
-                (
-                    -adjusted,
-                    -diversity,
-                    -base_score,
-                    str(row_dicts[index]["rule_label"]),
-                    index,
-                )
-            )
-            adjusted_scores[index] = adjusted
-            diversity_scores[index] = diversity
-            max_similarities[index] = metrics["similarity_score"]
+        # ------------------------------------------------------------------
+        # Pop until we find a valid (non-stale, still remaining) entry.
+        # ------------------------------------------------------------------
+        while heap:
+            neg_adj, neg_div, neg_base, _label, idx, s = heap[0]
+            if idx in remaining and s == seq[idx]:
+                break
+            heapq.heappop(heap)
 
-        scored_candidates.sort()
-        chosen = scored_candidates[0][4]
+        if not heap:
+            break  # defensive: should not happen if implementation is correct
+
+        neg_adj, neg_div, neg_base, _label, chosen, _ = heapq.heappop(heap)
+
+        adjusted_scores[chosen] = -neg_adj
+        diversity_scores[chosen] = -neg_div
+        max_similarities[chosen] = strongest_metrics[chosen]["similarity_score"]
+
         selected.append(chosen)
         remaining.discard(chosen)
 
-        # Update strongest_metrics only for candidate neighbors of the chosen
-        # rule.  All other remaining rules share no feature or cluster with it,
-        # so their similarity is 0 and strongest_metrics would be unchanged.
+        # ------------------------------------------------------------------
+        # Update strongest_metrics for each remaining neighbor of `chosen`.
+        # Only neighbors can have their similarity change; all other remaining
+        # rules have similarity 0 with `chosen` and are unaffected.
+        # ------------------------------------------------------------------
         chosen_exact, chosen_clusters = rule_sets[chosen]
         neighbors = _candidate_neighbor_indexes(chosen, rule_sets, feature_to_rules, cluster_to_rules)
         total_candidates += len(neighbors & remaining)
-        for index in neighbors:
-            if index not in remaining:
+        for idx in neighbors:
+            if idx not in remaining:
                 continue
-            index_exact, index_clusters = rule_sets[index]
+            idx_exact, idx_clusters = rule_sets[idx]
             pair_metrics = _rule_similarity_metrics(
-                index_exact, index_clusters, chosen_exact, chosen_clusters
+                idx_exact, idx_clusters, chosen_exact, chosen_clusters
             )
             sim_computations += 1
-            current_metrics = strongest_metrics[index]
+            current_metrics = strongest_metrics[idx]
             if (
                 pair_metrics["similarity_score"],
                 pair_metrics["cluster_overlap"],
@@ -624,14 +787,27 @@ def _rerank_with_diversity(
                 current_metrics["cluster_overlap"],
                 current_metrics["shared_feature_ratio"],
             ):
-                strongest_metrics[index] = pair_metrics
+                strongest_metrics[idx] = pair_metrics
+                new_div = _diversity_score(pair_metrics)
+                new_adj = base_scores[idx] * new_div
+                seq[idx] += 1
+                heapq.heappush(
+                    heap,
+                    (
+                        -new_adj,
+                        -new_div,
+                        -base_scores[idx],
+                        str(row_dicts[idx]["rule_label"]),
+                        idx,
+                        seq[idx],
+                    ),
+                )
 
     if _logger.isEnabledFor(logging.DEBUG):
-        n = len(row_dicts)
-        avg_cands = total_candidates / n if n else 0.0
+        avg_cands = total_candidates / K if K else 0.0
         _logger.debug(
             "_rerank_with_diversity:    rules=%d  similarity_computations=%d  avg_candidates=%.1f",
-            n,
+            K,
             sim_computations,
             avg_cands,
         )
