@@ -13,9 +13,14 @@ from apex_lab.research.signal_patterns.candidate_generator import (
     CandidateGeneratorConfig,
     generate_candidates,
 )
+from apex_lab.research.signal_patterns.diversity import analyze_feature_diversity
 from apex_lab.research.signal_patterns.engine import run_signal_patterns
 from apex_lab.research.signal_patterns.evaluator import evaluate_all_candidates
-from apex_lab.research.signal_patterns.ranking import rank_signals, walk_forward_validate
+from apex_lab.research.signal_patterns.ranking import (
+    build_ranking_artifacts,
+    rank_signals,
+    walk_forward_validate,
+)
 from apex_lab.research.signal_patterns.report import build_summary_payload, write_reports
 
 _SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "research_lab.py"
@@ -82,6 +87,10 @@ def _make_signal_dataset(rows: int = 400) -> pl.DataFrame:
             "rsi_bucket": rsi_bucket,
             "opening_range": opening_range,
             "noise_feature": noise,
+            "ema_signal_clone": [
+                (s * 1.01) + (0.01 * n) for s, n in zip(signal_strength, noise, strict=True)
+            ],
+            "price_proxy": [100.25 + (i * 0.1) + (0.01 * noise[i]) for i in range(rows)],
             "future_return_5": future_return_5,
             "future_return_10": future_return_10,
             "future_return_20": future_return_20,
@@ -102,12 +111,14 @@ def _make_feature_importance() -> pl.DataFrame:
         "opening_range",
         "market_regime",
         "hour",
+        "ema_signal_clone",
+        "price_proxy",
         "day",
         "month",
         "quarter",
         "noise_feature",
     ]
-    scores = [0.9, 0.8, 0.75, 0.6, 0.55, 0.4, 0.35, 0.3, 0.25, 0.1]
+    scores = [0.9, 0.8, 0.75, 0.6, 0.55, 0.4, 0.39, 0.38, 0.35, 0.3, 0.25, 0.1]
     return pl.DataFrame(
         {
             "rank": list(range(1, len(features) + 1)),
@@ -276,6 +287,89 @@ def test_ranking_produces_composite_score_and_is_robust_columns() -> None:
         assert scores == sorted(scores, reverse=True)
 
 
+def test_feature_diversity_analysis_groups_correlated_numeric_features() -> None:
+    dataset = _make_signal_dataset()
+    importance = _make_feature_importance()
+
+    analysis = analyze_feature_diversity(dataset, importance)
+
+    assert "feature_left" in analysis.feature_correlation.columns
+    assert "pearson_correlation" in analysis.feature_correlation.columns
+    assert "spearman_correlation" in analysis.feature_correlation.columns
+    assert analysis.feature_to_cluster["ema_signal_strength"] == analysis.feature_to_cluster["ema_signal_clone"]
+    assert analysis.cluster_importance.height > 0
+
+
+def test_ranking_keeps_strongest_representative_for_similar_rules() -> None:
+    stats = pl.DataFrame(
+        {
+            "rule_label": [
+                "ema_signal_strength == q3 AND atr_state == high",
+                "ema_signal_clone == q3 AND atr_state == high",
+                "noise_feature == q0 AND market_regime == above_ema200_high",
+            ],
+            "features": [
+                "['ema_signal_strength', 'atr_state']",
+                "['ema_signal_clone', 'atr_state']",
+                "['noise_feature', 'market_regime']",
+            ],
+            "conditions": [
+                "['ema_signal_strength == q3', 'atr_state == high']",
+                "['ema_signal_clone == q3', 'atr_state == high']",
+                "['noise_feature == q0', 'market_regime == above_ema200_high']",
+            ],
+            "combination_size": [2, 2, 2],
+            "signal_frequency": [120, 100, 95],
+            "win_rate": [0.7, 0.68, 0.64],
+            "average_return": [0.42, 0.39, 0.31],
+            "median_return": [0.4, 0.37, 0.28],
+            "profit_factor": [2.2, 2.0, 1.7],
+            "expectancy": [0.36, 0.33, 0.24],
+            "average_mfe": [0.6, 0.58, 0.44],
+            "average_mae": [-0.2, -0.21, -0.18],
+        }
+    )
+    wf = pl.DataFrame(
+        {
+            "rule_label": stats.get_column("rule_label"),
+            "is_robust": [True, True, True],
+            "train_expectancy": [0.35, 0.32, 0.23],
+            "val_expectancy": [0.34, 0.31, 0.22],
+            "oos_expectancy": [0.33, 0.29, 0.2],
+        }
+    )
+
+    artifacts = build_ranking_artifacts(
+        stats,
+        wf,
+        feature_to_cluster={
+            "ema_signal_strength": "cluster_001",
+            "ema_signal_clone": "cluster_001",
+            "atr_state": "cluster_002",
+            "noise_feature": "cluster_003",
+            "market_regime": "cluster_004",
+        },
+    )
+
+    ranked = artifacts.ranked_signals
+    assert ranked.height == 2
+    assert "diversity_score" in ranked.columns
+    assert ranked.get_column("rule_label").to_list()[0] == "ema_signal_strength == q3 AND atr_state == high"
+    similar_group = artifacts.all_ranked_signals.filter(
+        pl.col("rule_label").is_in(
+            [
+                "ema_signal_strength == q3 AND atr_state == high",
+                "ema_signal_clone == q3 AND atr_state == high",
+            ]
+        )
+    )
+    assert similar_group.get_column("similarity_group_id").n_unique() == 1
+    assert similar_group.get_column("representative_rule_label").unique().to_list() == [
+        "ema_signal_strength == q3 AND atr_state == high"
+    ]
+    assert artifacts.rule_similarity.height == 3
+
+
 # ---------------------------------------------------------------------------
 # Report generation tests
 # ---------------------------------------------------------------------------
@@ -363,9 +457,15 @@ def test_engine_generates_all_required_output_files(tmp_path: Path) -> None:
     expected = {
         "top_signals.csv",
         "top_signals.json",
+        "all_ranked_signals.csv",
         "candidate_statistics.csv",
         "walkforward_validation.csv",
         "summary.json",
+        "feature_correlation.csv",
+        "feature_clusters.json",
+        "cluster_importance.csv",
+        "rule_similarity.csv",
+        "signal_diversity_report.md",
     }
     assert expected.issubset({p.name for p in output_dir.iterdir()})
     assert "top_20_signals" in result.summary
