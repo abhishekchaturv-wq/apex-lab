@@ -57,6 +57,12 @@ python scripts/research_lab.py --mode signal_dataset \
 python scripts/research_lab.py --mode signal_discovery \
     --dataset reports/lab/signal_dataset/dataset.parquet
 
+# High-Expectancy Signal Pattern Discovery
+python scripts/research_lab.py \
+    --mode signal_patterns \
+    --dataset reports/lab/signal_dataset/dataset.parquet \
+    --feature-ranking reports/lab/signal_discovery/feature_importance.csv
+
 # Pine Script generator
 python scripts/research_lab.py --mode pine
 ```
