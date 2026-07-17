@@ -156,12 +156,14 @@ def _uf_union(parent: list[int], rank: list[int], x: int, y: int) -> None:
 # pairwise similarity with every third rule, and must always land in the
 # same connected component.
 #
-# With top_features=25 and combo_sizes=(2,3,4) the number of distinct
-# feature frozensets is at most C(25,2)+C(25,3)+C(25,4) = 15,250, which is
-# orders of magnitude smaller than the ~692 K individual rules.
+# With the default generator configuration (top_features=25, combo_sizes=(2,3,4)),
+# the number of distinct feature frozensets is at most
+# C(top_features,2)+C(top_features,3)+C(top_features,4), a polynomial that grows
+# far slower than the ~692 K individual rules (which include all bucket combinations).
+# See CandidateGeneratorConfig for the configurable parameters.
 #
 # Algorithm (exact, not approximate):
-#   1. Group the N rules by feature frozenset → F ≤ 15,250 unique groups.
+#   1. Group the N rules by feature frozenset → F unique groups.
 #   2. Build the similarity graph on those F unique frozensets.
 #   3. Find connected components via Union-Find on F nodes.
 #   4. Map every rule to its component through its frozenset group.
@@ -700,6 +702,9 @@ def _rerank_with_diversity(
 
     row_dicts = ranked.to_dicts()
     K = len(row_dicts)
+    assert K == len(feature_lists), (
+        f"ranked frame has {K} rows but feature_lists has {len(feature_lists)} entries"
+    )
     remaining: set[int] = set(range(K))
     selected: list[int] = []
     adjusted_scores: dict[int, float] = {}

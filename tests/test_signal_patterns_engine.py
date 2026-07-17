@@ -602,7 +602,7 @@ def test_similarity_report_bounded_by_top_k() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_frozenset_deduplication_groups_rules_by_feature_set() -> None:
+def test_build_frozenset_index_groups_identical_features() -> None:
     """_build_frozenset_index must group rules with identical feature frozensets."""
     from apex_lab.research.signal_patterns.ranking import _build_frozenset_index
 
@@ -621,7 +621,7 @@ def test_frozenset_deduplication_groups_rules_by_feature_set() -> None:
     assert frozenset(("c", "d")) in fs_to_uid
 
 
-def test_union_find_path_compression_and_union_by_rank() -> None:
+def test_uf_operations_produce_correct_components() -> None:
     """_uf_find and _uf_union must produce correct components."""
     from apex_lab.research.signal_patterns.ranking import _uf_find, _uf_union
 
@@ -645,8 +645,8 @@ def test_union_find_path_compression_and_union_by_rank() -> None:
     assert r0 != r4, "components {0-3} and {4-5} must be distinct"
 
 
-def test_rules_with_identical_feature_sets_form_single_group() -> None:
-    """All rules with the same feature frozenset must land in one similarity group.
+def test_identical_feature_sets_collapse_to_single_representative() -> None:
+    """All rules with the same feature frozenset must collapse to one representative.
 
     The similarity between two rules with identical feature frozensets is 1.0
     (Jaccard = shared_ratio = 1.0), which always exceeds the 0.85 threshold.
@@ -692,7 +692,7 @@ def test_rules_with_identical_feature_sets_form_single_group() -> None:
     assert len(group_ids) == 1, "all rules must share the same similarity_group_id"
 
 
-def test_select_representatives_similarity_computations_bounded_by_unique_sets() -> None:
+def test_similarity_computations_scale_with_frozensets_not_rules() -> None:
     """Similarity computations must be bounded by F*(F-1)/2, not N*(N-1)/2.
 
     With N rules across F unique feature frozensets, the new algorithm performs
@@ -785,8 +785,8 @@ def test_select_representatives_similarity_computations_bounded_by_unique_sets()
     )
 
 
-def test_rerank_with_diversity_lazy_heap_matches_exhaustive_scan() -> None:
-    """The lazy-heap greedy reranker must produce identical output to an exhaustive scan.
+def test_rerank_with_diversity_produces_deterministic_output() -> None:
+    """The lazy-heap greedy reranker must produce deterministic, consistent output.
 
     We drive _rerank_with_diversity through the full build_ranking_artifacts
     pipeline on a dataset where rules share features (triggering diversity
@@ -879,7 +879,7 @@ def test_rerank_with_diversity_lazy_heap_matches_exhaustive_scan() -> None:
     assert scores == sorted(scores, reverse=True), "composite_score must be non-increasing"
 
 
-def test_representative_selection_scalability_no_O_N_squared_regression() -> None:
+def test_representative_selection_scales_linearly_with_frozensets() -> None:
     """Similarity computations in _select_representatives must scale with F, not N.
 
     This test creates N rules from F unique feature frozensets (high N/F ratio),
