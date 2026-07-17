@@ -9,7 +9,11 @@ import polars as pl
 
 from apex_lab.research.signal_discovery.statistics import normalize_series
 from apex_lab.research.signal_patterns.candidate_generator import CandidateRule
-from apex_lab.research.signal_patterns.evaluator import DEFAULT_TARGET, evaluate_rule
+from apex_lab.research.signal_patterns.evaluator import (
+    DEFAULT_TARGET,
+    _group_stats,
+    precompute_bucket_columns,
+)
 
 # Composite ranking weights.
 _EXPECTANCY_WEIGHT = 0.30
@@ -54,6 +58,9 @@ def walk_forward_validate(
     ``is_robust`` flag that is ``True`` when the rule survives all splits
     with at least ``_MIN_SPLIT_SAMPLES`` matching rows and non-negative
     expectancy on the OOS split.
+
+    Bucket columns are precomputed once per split; each unique feature
+    combination is aggregated in a single ``group_by`` pass.
     """
     n = df.height
     train_end = int(n * _TRAIN_RATIO)
@@ -65,34 +72,71 @@ def walk_forward_validate(
         "oos": df.slice(val_end, n - val_end),
     }
 
+    # Collect all features needed across all candidates.
+    all_features: list[str] = sorted(
+        {f for rule in candidates for f in rule.features if f in df.columns}
+    )
+
+    # Precompute bucket columns for each split exactly once.
+    splits_b: dict[str, pl.DataFrame] = {
+        name: precompute_bucket_columns(split_df, all_features, bins=bins)
+        for name, split_df in splits.items()
+    }
+
+    # Group candidates by feature combination.
+    combo_to_candidates: dict[tuple[str, ...], list[CandidateRule]] = {}
+    for rule in candidates:
+        combo_to_candidates.setdefault(rule.features, []).append(rule)
+
+    # Precompute group_by stats for every (feature_combination, split) pair.
+    # Key: (features_tuple, bucket_key) → stats row dict.
+    SplitLookup = dict[tuple[tuple[str, ...], str], dict[str, Any]]
+    split_lookups: dict[str, SplitLookup] = {name: {} for name in splits}
+
+    for features_tuple in combo_to_candidates:
+        bucket_cols = [f"_b_{f}" for f in features_tuple]
+        for split_name, split_b in splits_b.items():
+            if not all(c in split_b.columns for c in bucket_cols):
+                continue
+            if target_column not in split_b.columns:
+                continue
+            grouped = _group_stats(split_b, bucket_cols, target_column)
+            if grouped.is_empty():
+                continue
+            for row in grouped.to_dicts():
+                bucket_key = "|".join(str(row[c]) for c in bucket_cols)
+                split_lookups[split_name][(features_tuple, bucket_key)] = row
+
     rows: list[dict[str, Any]] = []
 
     for rule in candidates:
-        rule_rows: dict[str, Any] = {
+        rule_row: dict[str, Any] = {
             "rule_label": rule.label(),
             "features": str(list(rule.features)),
             "combination_size": len(rule.features),
         }
         is_robust = True
 
-        for split_name, split_df in splits.items():
-            stats = evaluate_rule(split_df, rule, target_column=target_column, bins=bins)
-            if stats is None or stats["signal_frequency"] < _MIN_SPLIT_SAMPLES:
+        for split_name in ("train", "val", "oos"):
+            stats = split_lookups[split_name].get((rule.features, rule.bucket_key))
+            n_split = int(stats["_n"]) if stats is not None else 0
+
+            if stats is None or n_split < _MIN_SPLIT_SAMPLES:
                 is_robust = False
-                rule_rows[f"{split_name}_frequency"] = 0
-                rule_rows[f"{split_name}_win_rate"] = None
-                rule_rows[f"{split_name}_expectancy"] = None
-                rule_rows[f"{split_name}_profit_factor"] = None
+                rule_row[f"{split_name}_frequency"] = 0
+                rule_row[f"{split_name}_win_rate"] = None
+                rule_row[f"{split_name}_expectancy"] = None
+                rule_row[f"{split_name}_profit_factor"] = None
             else:
-                rule_rows[f"{split_name}_frequency"] = stats["signal_frequency"]
-                rule_rows[f"{split_name}_win_rate"] = stats["win_rate"]
-                rule_rows[f"{split_name}_expectancy"] = stats["expectancy"]
-                rule_rows[f"{split_name}_profit_factor"] = stats["profit_factor"]
-                if split_name == "oos" and stats["expectancy"] < 0:
+                rule_row[f"{split_name}_frequency"] = n_split
+                rule_row[f"{split_name}_win_rate"] = round(float(stats["_win_rate"]), 6)
+                rule_row[f"{split_name}_expectancy"] = round(float(stats["_expectancy"]), 6)
+                rule_row[f"{split_name}_profit_factor"] = _safe_float(stats["_profit_factor"])
+                if split_name == "oos" and float(stats["_expectancy"]) < 0:
                     is_robust = False
 
-        rule_rows["is_robust"] = is_robust
-        rows.append(rule_rows)
+        rule_row["is_robust"] = is_robust
+        rows.append(rule_row)
 
     if not rows:
         return _empty_wf_frame()
