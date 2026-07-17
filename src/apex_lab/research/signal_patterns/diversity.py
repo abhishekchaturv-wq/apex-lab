@@ -40,7 +40,7 @@ class FeatureCluster:
 
 @dataclass(frozen=True)
 class FeatureDiversityAnalysis:
-    """Computed diversity artefacts for engineered features."""
+    """Computed diversity artifacts for engineered features."""
 
     feature_correlation: pl.DataFrame
     feature_clusters: tuple[FeatureCluster, ...]

@@ -43,6 +43,12 @@ _COMPLEXITY_PENALTY_PER_EXTRA_FEATURE = 0.02
 _REPRESENTATIVE_SIMILARITY_THRESHOLD = 0.85
 _DIVERSITY_ZERO_THRESHOLD = 0.85
 _DIVERSITY_MODERATE_THRESHOLD = 0.50
+_DEFAULT_SIMILARITY_METRICS = {
+    "jaccard_similarity": 0.0,
+    "cluster_overlap": 0.0,
+    "shared_feature_ratio": 0.0,
+    "similarity_score": 0.0,
+}
 
 EPSILON = 1e-12
 
@@ -136,13 +142,13 @@ def _detect_suspicious_rules(
 
 def _representative_sort_key(row: dict[str, Any]) -> tuple[int, float, int, float, int, float, str]:
     return (
-        -int(bool(row["is_robust"])),
+        -int(bool(row.get("is_robust", False))),
         -float(row.get("_wf_stability") or 0.0),
-        -int(row["signal_frequency"]),
-        -float(row["expectancy"]),
-        int(row["combination_size"]),
-        -float(row["base_composite_score"]),
-        str(row["rule_label"]),
+        -int(row.get("signal_frequency", 0)),
+        -float(row.get("expectancy", 0.0)),
+        int(row.get("combination_size", 0)),
+        -float(row.get("base_composite_score", 0.0)),
+        str(row.get("rule_label", "")),
     )
 
 
@@ -405,15 +411,7 @@ def _pair_metrics(
     lookup: dict[tuple[int, int], dict[str, float]],
 ) -> dict[str, float]:
     key = (left_index, right_index) if left_index < right_index else (right_index, left_index)
-    return lookup.get(
-        key,
-        {
-            "jaccard_similarity": 0.0,
-            "cluster_overlap": 0.0,
-            "shared_feature_ratio": 0.0,
-            "similarity_score": 0.0,
-        },
-    )
+    return lookup.get(key, _DEFAULT_SIMILARITY_METRICS)
 
 
 def _select_representatives(
@@ -480,12 +478,7 @@ def _rerank_with_diversity(
     diversity_scores: dict[int, float] = {}
     max_similarities: dict[int, float] = {}
     strongest_metrics: dict[int, dict[str, float]] = {
-        index: {
-            "jaccard_similarity": 0.0,
-            "cluster_overlap": 0.0,
-            "shared_feature_ratio": 0.0,
-            "similarity_score": 0.0,
-        }
+        index: dict(_DEFAULT_SIMILARITY_METRICS)
         for index in remaining
     }
 
@@ -593,7 +586,7 @@ def build_ranking_artifacts(
     wf: pl.DataFrame,
     feature_to_cluster: dict[str, str] | None = None,
 ) -> RankingArtifacts:
-    """Compute diversity-aware ranking artefacts."""
+    """Compute diversity-aware ranking artifacts."""
     cluster_map = feature_to_cluster or {}
     base_ranked = _build_base_ranking(stats, wf)
     if base_ranked.is_empty():

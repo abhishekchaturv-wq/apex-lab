@@ -27,7 +27,7 @@ def _records(df: pl.DataFrame) -> list[dict[str, Any]]:
     return [_sanitize(record) for record in df.to_dicts()]
 
 
-def _parse_features(features_value: str) -> tuple[str, ...]:
+def _parse_feature_list(features_value: str) -> tuple[str, ...]:
     try:
         parsed = ast.literal_eval(features_value)
     except (ValueError, SyntaxError):
@@ -48,7 +48,7 @@ def _concept_counts(
     for row in ranked.head(limit).to_dicts():
         concepts = {
             feature_diversity.feature_to_representative.get(feature, feature)
-            for feature in _parse_features(str(row["features"]))
+            for feature in _parse_feature_list(str(row["features"]))
         }
         for concept in sorted(concepts):
             counts[concept] = counts.get(concept, 0) + 1
