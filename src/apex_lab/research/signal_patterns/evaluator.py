@@ -130,8 +130,14 @@ def precompute_bucket_columns(
 ) -> pl.DataFrame:
     """Add ``_b_{feature}`` bucket columns for every feature in *features*.
 
-    Each column is computed exactly once.  Features missing from *df* are
-    silently skipped.  Already-present bucket columns are left unchanged.
+    Each column is computed exactly once using the quantile distribution of
+    *df* with the given *bins* setting.  Features missing from *df* are
+    silently skipped.
+
+    Note: if a ``_b_{feature}`` column already exists in *df* it is left
+    unchanged, regardless of the *bins* argument.  Always pass a fresh
+    (bucket-column-free) DataFrame to avoid inadvertently reusing stale
+    bucket data computed with a different *bins* value.
     """
     new_cols: list[pl.Series] = []
     for feature in features:

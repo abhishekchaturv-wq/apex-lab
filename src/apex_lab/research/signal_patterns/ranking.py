@@ -89,9 +89,10 @@ def walk_forward_validate(
         combo_to_candidates.setdefault(rule.features, []).append(rule)
 
     # Precompute group_by stats for every (feature_combination, split) pair.
-    # Key: (features_tuple, bucket_key) → stats row dict.
-    SplitLookup = dict[tuple[tuple[str, ...], str], dict[str, Any]]
-    split_lookups: dict[str, SplitLookup] = {name: {} for name in splits}
+    # Outer key: split name.  Inner key: (features_tuple, bucket_key) → stats row dict.
+    split_lookups: dict[str, dict[tuple[tuple[str, ...], str], dict[str, Any]]] = {
+        name: {} for name in splits
+    }
 
     for features_tuple in combo_to_candidates:
         bucket_cols = [f"_b_{f}" for f in features_tuple]
