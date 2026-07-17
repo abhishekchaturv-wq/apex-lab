@@ -168,17 +168,17 @@ def walk_forward_validate(
     }
 
     for features_tuple in combo_to_candidates:
-        bucket_cols = [f"_b_{feature}" for feature in features_tuple]
-        for split_name, split_b in splits_b.items():
-            if not all(column in split_b.columns for column in bucket_cols):
+        bucket_columns = [f"_b_{feature}" for feature in features_tuple]
+        for split_name, split_with_buckets in splits_b.items():
+            if not all(column in split_with_buckets.columns for column in bucket_columns):
                 continue
-            if target_column not in split_b.columns:
+            if target_column not in split_with_buckets.columns:
                 continue
-            grouped = _group_stats(split_b, bucket_cols, target_column)
+            grouped = _group_stats(split_with_buckets, bucket_columns, target_column)
             if grouped.is_empty():
                 continue
             for row in grouped.to_dicts():
-                bucket_key = "|".join(str(row[column]) for column in bucket_cols)
+                bucket_key = "|".join(str(row[column]) for column in bucket_columns)
                 split_lookups[split_name][(features_tuple, bucket_key)] = row
 
     rows: list[dict[str, Any]] = []

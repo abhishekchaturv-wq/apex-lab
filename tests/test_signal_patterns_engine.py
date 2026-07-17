@@ -88,7 +88,8 @@ def _make_signal_dataset(rows: int = 400) -> pl.DataFrame:
             "opening_range": opening_range,
             "noise_feature": noise,
             "ema_signal_clone": [
-                (s * 1.01) + (0.01 * n) for s, n in zip(signal_strength, noise, strict=True)
+                (signal * 1.01) + (0.01 * noise_value)
+                for signal, noise_value in zip(signal_strength, noise, strict=True)
             ],
             "price_proxy": [100.25 + (i * 0.1) + (0.01 * noise[i]) for i in range(rows)],
             "future_return_5": future_return_5,
