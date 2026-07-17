@@ -18,7 +18,7 @@ from apex_lab.research.signal_patterns.evaluator import (
     precompute_bucket_columns,
 )
 
-# Composite ranking weights. They sum to 1.0 and are applied to normalised
+# Composite ranking weights. They sum to 1.0 and are applied to normalized
 # metrics before complexity and suspicious-rule adjustments.
 _EXPECTANCY_WEIGHT = 0.25
 _OOS_EXPECTANCY_WEIGHT = 0.15
@@ -141,6 +141,12 @@ def _detect_suspicious_rules(
 
 
 def _representative_sort_key(row: dict[str, Any]) -> tuple[int, float, int, float, int, float, str]:
+    """Return the representative-selection sort key.
+
+    Components are ordered by robustness, walk-forward stability, signal
+    frequency, expectancy, rule complexity, base composite score, and
+    rule label.
+    """
     return (
         -int(bool(row.get("is_robust", False))),
         -float(row.get("_wf_stability") or 0.0),

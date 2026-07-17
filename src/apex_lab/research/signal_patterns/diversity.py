@@ -91,6 +91,7 @@ def _correlation_strength(
     right: str,
     correlation_lookup: dict[tuple[str, str], float],
 ) -> float:
+    """Return cached pair strength using lexicographically ordered lookup keys."""
     key = (left, right) if left <= right else (right, left)
     return correlation_lookup.get(key, 0.0)
 
