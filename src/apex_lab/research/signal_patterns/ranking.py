@@ -85,16 +85,22 @@ def _cluster_for_feature(feature: str, feature_to_cluster: dict[str, str]) -> st
     return feature_to_cluster.get(feature, f"singleton::{feature}")
 
 
-def _rule_similarity_metrics(
-    left_features: tuple[str, ...],
-    right_features: tuple[str, ...],
+def _precompute_rule_sets(
+    features: tuple[str, ...],
     feature_to_cluster: dict[str, str],
-) -> dict[str, float]:
-    left_exact = set(left_features)
-    right_exact = set(right_features)
-    left_clusters = {_cluster_for_feature(feature, feature_to_cluster) for feature in left_exact}
-    right_clusters = {_cluster_for_feature(feature, feature_to_cluster) for feature in right_exact}
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Return (feature_set, cluster_set) for a rule, ready to reuse across comparisons."""
+    feature_set = frozenset(features)
+    cluster_set = frozenset(_cluster_for_feature(f, feature_to_cluster) for f in feature_set)
+    return feature_set, cluster_set
 
+
+def _rule_similarity_metrics(
+    left_exact: frozenset[str],
+    left_clusters: frozenset[str],
+    right_exact: frozenset[str],
+    right_clusters: frozenset[str],
+) -> dict[str, float]:
     exact_union = left_exact | right_exact
     cluster_union = left_clusters | right_clusters
     exact_shared = left_exact & right_exact
@@ -406,12 +412,14 @@ def _select_representatives(
     row_dicts = ranked.to_dicts()
     adjacency: dict[int, set[int]] = defaultdict(set)
 
+    rule_sets = [_precompute_rule_sets(f, feature_to_cluster) for f in feature_lists]
+
     for left_index in range(len(feature_lists)):
+        left_exact, left_clusters = rule_sets[left_index]
         for right_index in range(left_index + 1, len(feature_lists)):
+            right_exact, right_clusters = rule_sets[right_index]
             metrics = _rule_similarity_metrics(
-                feature_lists[left_index],
-                feature_lists[right_index],
-                feature_to_cluster,
+                left_exact, left_clusters, right_exact, right_clusters
             )
             if metrics["similarity_score"] >= _REPRESENTATIVE_SIMILARITY_THRESHOLD:
                 adjacency[left_index].add(right_index)
@@ -473,6 +481,8 @@ def _rerank_with_diversity(
         for index in remaining
     }
 
+    rule_sets = [_precompute_rule_sets(f, feature_to_cluster) for f in feature_lists]
+
     while remaining:
         scored_candidates: list[tuple[float, float, float, str, int]] = []
         for index in remaining:
@@ -498,11 +508,11 @@ def _rerank_with_diversity(
         selected.append(chosen)
         remaining.remove(chosen)
 
+        chosen_exact, chosen_clusters = rule_sets[chosen]
         for index in remaining:
+            index_exact, index_clusters = rule_sets[index]
             pair_metrics = _rule_similarity_metrics(
-                feature_lists[index],
-                feature_lists[chosen],
-                feature_to_cluster,
+                index_exact, index_clusters, chosen_exact, chosen_clusters
             )
             current_metrics = strongest_metrics[index]
             if (
@@ -556,6 +566,8 @@ def _build_rule_similarity_report(
     n = len(feature_lists)
     k = min(top_k, n - 1)
 
+    rule_sets = [_precompute_rule_sets(f, feature_to_cluster) for f in feature_lists]
+
     # Per-rule min-heaps of size k, keyed by (score, neighbor_label, ...).
     # heap[0] is the LOWEST-score entry – the one we would evict.
     # We update both sides of each pair in a single O(N²/2) scan.
@@ -571,11 +583,11 @@ def _build_rule_similarity_report(
             heapq.heapreplace(heap, entry)
 
     for left_index in range(n):
+        left_exact, left_clusters = rule_sets[left_index]
         for right_index in range(left_index + 1, n):
+            right_exact, right_clusters = rule_sets[right_index]
             metrics = _rule_similarity_metrics(
-                feature_lists[left_index],
-                feature_lists[right_index],
-                feature_to_cluster,
+                left_exact, left_clusters, right_exact, right_clusters
             )
             score = metrics["similarity_score"]
             m_tuple: _SimilarityTuple = (
