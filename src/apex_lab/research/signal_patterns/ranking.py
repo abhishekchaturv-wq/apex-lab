@@ -559,11 +559,12 @@ def _build_rule_similarity_report(
     # Per-rule min-heaps of size k, keyed by (score, neighbor_label, ...).
     # heap[0] is the LOWEST-score entry – the one we would evict.
     # We update both sides of each pair in a single O(N²/2) scan.
-    HeapEntry = tuple  # (score: float, neighbor_label: str, neighbor_index: int, m_tuple: tuple)
-    heaps: list[list] = [[] for _ in range(n)]
+    _SimilarityTuple = tuple[float, float, float, float]  # (jaccard, cluster_overlap, shared_ratio, sim_score)
+    _HeapEntry = tuple[float, str, int, _SimilarityTuple]
+    heaps: list[list[_HeapEntry]] = [[] for _ in range(n)]
 
-    def _push(heap: list, score: float, neighbor_label: str, neighbor_index: int, m_tuple: tuple) -> None:
-        entry: HeapEntry = (score, neighbor_label, neighbor_index, m_tuple)
+    def _push(heap: list[_HeapEntry], score: float, neighbor_label: str, neighbor_index: int, m_tuple: _SimilarityTuple) -> None:
+        entry: _HeapEntry = (score, neighbor_label, neighbor_index, m_tuple)
         if len(heap) < k:
             heapq.heappush(heap, entry)
         elif score > heap[0][0]:
@@ -577,7 +578,7 @@ def _build_rule_similarity_report(
                 feature_to_cluster,
             )
             score = metrics["similarity_score"]
-            m_tuple = (
+            m_tuple: _SimilarityTuple = (
                 metrics["jaccard_similarity"],
                 metrics["cluster_overlap"],
                 metrics["shared_feature_ratio"],
@@ -590,7 +591,7 @@ def _build_rule_similarity_report(
     rows: list[dict[str, object]] = []
 
     for rule_index in range(n):
-        for score, neighbor_label, _neighbor_index, m_tuple in sorted(
+        for score, neighbor_label, _, m_tuple in sorted(
             heaps[rule_index], key=lambda x: (-x[0], x[1])
         ):
             left_label, right_label = sorted([labels[rule_index], neighbor_label])
