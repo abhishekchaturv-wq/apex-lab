@@ -16,7 +16,8 @@ from apex_lab.research.signal_patterns.evaluator import (
     precompute_bucket_columns,
 )
 
-# Composite ranking weights (must sum to 1.0).
+# Composite ranking weights.  They sum to 1.0 and are applied to normalised
+# metrics before complexity and suspicious-rule adjustments.
 # Walk-forward robustness, OOS expectancy, and stability are emphasised;
 # raw in-sample win rate is de-emphasised.
 _EXPECTANCY_WEIGHT = 0.25
@@ -86,16 +87,11 @@ _FEATURE_SYNONYM_MAP: dict[str, str] = {
     "swing_low": "swing_point",
 }
 
-# Substring-based canonicalisation handles naming variants like "_swing_high_10".
+# Substring-based canonicalisation handles naming variants that are NOT
+# already covered by exact lookup above (e.g. "_swing_high_10", "swing_low_5").
 _FEATURE_CANONICAL_SUBSTRINGS: list[tuple[str, str]] = [
     ("swing_high", "swing_point"),
     ("swing_low", "swing_point"),
-    ("or_high", "opening_range"),
-    ("or_low", "opening_range"),
-    ("median_price", "price_aggregate"),
-    ("typical_price", "price_aggregate"),
-    ("weighted_price", "price_aggregate"),
-    ("vwap", "price_aggregate"),
 ]
 
 
