@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import ast
 import heapq
+import logging
 import math
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
+
+_logger = logging.getLogger(__name__)
 
 import polars as pl
 
@@ -93,6 +96,51 @@ def _precompute_rule_sets(
     feature_set = frozenset(features)
     cluster_set = frozenset(_cluster_for_feature(f, feature_to_cluster) for f in feature_set)
     return feature_set, cluster_set
+
+
+def _build_inverted_indexes(
+    rule_sets: list[tuple[frozenset[str], frozenset[str]]],
+) -> tuple[dict[str, list[int]], dict[str, list[int]]]:
+    """Build feature→rules and cluster→rules inverted indexes in O(N) time.
+
+    Returns two dicts: feature_to_rules and cluster_to_rules. Each maps a token
+    to the sorted list of rule indexes that contain that token. These indexes
+    allow O(actual-neighbors) candidate enumeration instead of O(N²).
+    """
+    feature_to_rules: dict[str, list[int]] = defaultdict(list)
+    cluster_to_rules: dict[str, list[int]] = defaultdict(list)
+    for i, (feat_set, clust_set) in enumerate(rule_sets):
+        for f in feat_set:
+            feature_to_rules[f].append(i)
+        for c in clust_set:
+            cluster_to_rules[c].append(i)
+    return dict(feature_to_rules), dict(cluster_to_rules)
+
+
+def _candidate_neighbor_indexes(
+    index: int,
+    rule_sets: list[tuple[frozenset[str], frozenset[str]]],
+    feature_to_rules: dict[str, list[int]],
+    cluster_to_rules: dict[str, list[int]],
+) -> set[int]:
+    """Return the set of rule indexes sharing at least one feature or cluster with rule *index*.
+
+    Two rules with no shared features AND no shared clusters always have
+    similarity_score == 0 (jaccard == cluster_overlap == shared_ratio == 0), so
+    they can never influence any threshold-based decision.  By restricting
+    comparison to this candidate set we skip all structurally zero-similarity
+    pairs while preserving exact correctness.
+    """
+    feat_set, clust_set = rule_sets[index]
+    candidates: set[int] = set()
+    for f in feat_set:
+        if f in feature_to_rules:
+            candidates.update(feature_to_rules[f])
+    for c in clust_set:
+        if c in cluster_to_rules:
+            candidates.update(cluster_to_rules[c])
+    candidates.discard(index)
+    return candidates
 
 
 def _rule_similarity_metrics(
@@ -408,22 +456,51 @@ def _select_representatives(
     feature_lists: list[tuple[str, ...]],
     feature_to_cluster: dict[str, str],
 ) -> tuple[dict[int, str], dict[int, str], set[int]]:
-    """Build similarity groups and pick representatives without a pre-built all-pairs lookup."""
+    """Build similarity groups and pick representatives using exact neighbor indexes.
+
+    Complexity vs original O(N²) pairwise scan:
+    - Index construction:         O(N × avg_features)
+    - Candidate enumeration:      O(N × avg_candidates)
+    - Similarity computation:     O(actual candidate pairs)
+
+    Correctness guarantee: any pair with similarity_score >= threshold must share
+    at least one feature or cluster, so the inverted indexes enumerate every such
+    pair exactly – no false negatives, no approximations.
+    """
     row_dicts = ranked.to_dicts()
     adjacency: dict[int, set[int]] = defaultdict(set)
 
     rule_sets = [_precompute_rule_sets(f, feature_to_cluster) for f in feature_lists]
+    feature_to_rules, cluster_to_rules = _build_inverted_indexes(rule_sets)
+
+    sim_computations = 0
+    total_candidates = 0
 
     for left_index in range(len(feature_lists)):
-        left_exact, left_clusters = rule_sets[left_index]
-        for right_index in range(left_index + 1, len(feature_lists)):
+        neighbors = _candidate_neighbor_indexes(left_index, rule_sets, feature_to_rules, cluster_to_rules)
+        total_candidates += len(neighbors)
+        for right_index in neighbors:
+            if right_index <= left_index:
+                continue
+            left_exact, left_clusters = rule_sets[left_index]
             right_exact, right_clusters = rule_sets[right_index]
             metrics = _rule_similarity_metrics(
                 left_exact, left_clusters, right_exact, right_clusters
             )
+            sim_computations += 1
             if metrics["similarity_score"] >= _REPRESENTATIVE_SIMILARITY_THRESHOLD:
                 adjacency[left_index].add(right_index)
                 adjacency[right_index].add(left_index)
+
+    if _logger.isEnabledFor(logging.DEBUG):
+        n = len(feature_lists)
+        avg_cands = total_candidates / n if n else 0.0
+        _logger.debug(
+            "_select_representatives: rules=%d  similarity_computations=%d  avg_candidates=%.1f",
+            n,
+            sim_computations,
+            avg_cands,
+        )
 
     components: list[list[int]] = []
     seen: set[int] = set()
@@ -466,12 +543,23 @@ def _rerank_with_diversity(
     feature_lists: list[tuple[str, ...]],
     feature_to_cluster: dict[str, str],
 ) -> pl.DataFrame:
-    """Greedy diversity re-ranking that computes similarities incrementally (O(N) memory)."""
+    """Greedy diversity re-ranking with O(N × avg_candidates) similarity computations.
+
+    Compared to the previous implementation:
+    - ``remaining`` is a ``set`` so each removal is O(1) instead of O(N).
+    - After selecting a rule, ``strongest_metrics`` is updated only for its
+      candidate neighbors from the inverted indexes.  Rules that share no
+      feature or cluster with the chosen rule always have similarity 0 and their
+      strongest_metrics would not change, so the updates are safely skipped.
+
+    All scores, diversity values and ranking order remain bit-for-bit identical
+    to the original O(N²) implementation.
+    """
     if ranked.is_empty():
         return ranked
 
     row_dicts = ranked.to_dicts()
-    remaining = list(range(len(row_dicts)))
+    remaining: set[int] = set(range(len(row_dicts)))
     selected: list[int] = []
     adjusted_scores: dict[int, float] = {}
     diversity_scores: dict[int, float] = {}
@@ -482,6 +570,10 @@ def _rerank_with_diversity(
     }
 
     rule_sets = [_precompute_rule_sets(f, feature_to_cluster) for f in feature_lists]
+    feature_to_rules, cluster_to_rules = _build_inverted_indexes(rule_sets)
+
+    sim_computations = 0
+    total_candidates = 0
 
     while remaining:
         scored_candidates: list[tuple[float, float, float, str, int]] = []
@@ -506,14 +598,22 @@ def _rerank_with_diversity(
         scored_candidates.sort()
         chosen = scored_candidates[0][4]
         selected.append(chosen)
-        remaining.remove(chosen)
+        remaining.discard(chosen)
 
+        # Update strongest_metrics only for candidate neighbors of the chosen
+        # rule.  All other remaining rules share no feature or cluster with it,
+        # so their similarity is 0 and strongest_metrics would be unchanged.
         chosen_exact, chosen_clusters = rule_sets[chosen]
-        for index in remaining:
+        neighbors = _candidate_neighbor_indexes(chosen, rule_sets, feature_to_rules, cluster_to_rules)
+        total_candidates += len(neighbors & remaining)
+        for index in neighbors:
+            if index not in remaining:
+                continue
             index_exact, index_clusters = rule_sets[index]
             pair_metrics = _rule_similarity_metrics(
                 index_exact, index_clusters, chosen_exact, chosen_clusters
             )
+            sim_computations += 1
             current_metrics = strongest_metrics[index]
             if (
                 pair_metrics["similarity_score"],
@@ -525,6 +625,16 @@ def _rerank_with_diversity(
                 current_metrics["shared_feature_ratio"],
             ):
                 strongest_metrics[index] = pair_metrics
+
+    if _logger.isEnabledFor(logging.DEBUG):
+        n = len(row_dicts)
+        avg_cands = total_candidates / n if n else 0.0
+        _logger.debug(
+            "_rerank_with_diversity:    rules=%d  similarity_computations=%d  avg_candidates=%.1f",
+            n,
+            sim_computations,
+            avg_cands,
+        )
 
     ordered = ranked[selected].with_columns(
         [
