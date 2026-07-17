@@ -36,6 +36,8 @@ _SCORE_COL = "composite_score"
 
 _logger = logging.getLogger(__name__)
 
+_STAGE_NAME_WIDTH = 34  # Fixed column width for profiling log lines.
+
 
 def _rss_mb() -> float | None:
     """Return peak resident set size in MiB, or None if unavailable."""
@@ -48,7 +50,7 @@ def _rss_mb() -> float | None:
 
         divisor = 1024 if sys.platform != "darwin" else (1024 * 1024)
         return raw / divisor
-    except Exception:
+    except (ImportError, AttributeError, OSError):
         return None
 
 
@@ -58,7 +60,14 @@ def _log_stage(stage: str, elapsed: float, n_rules: int = 0) -> None:
         return
     rss = _rss_mb()
     rss_str = f"  peak_rss={rss:.1f}MiB" if rss is not None else ""
-    _logger.debug("[profiling] %-34s  elapsed=%.3fs%s  rules=%d", stage, elapsed, rss_str, n_rules)
+    _logger.debug(
+        "[profiling] %-*s  elapsed=%.3fs%s  rules=%d",
+        _STAGE_NAME_WIDTH,
+        stage,
+        elapsed,
+        rss_str,
+        n_rules,
+    )
 
 
 @dataclass(frozen=True)

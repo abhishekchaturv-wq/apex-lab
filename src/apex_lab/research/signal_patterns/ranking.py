@@ -104,8 +104,8 @@ def _build_inverted_indexes(
     """Build feature→rules and cluster→rules inverted indexes in O(N) time.
 
     Returns two dicts: feature_to_rules and cluster_to_rules. Each maps a token
-    to the sorted list of rule indexes that contain that token. These indexes
-    allow O(actual-neighbors) candidate enumeration instead of O(N²).
+    to the list of rule indexes (in ascending order) that contain that token.
+    These indexes allow O(actual-neighbors) candidate enumeration instead of O(N²).
     """
     feature_to_rules: dict[str, list[int]] = defaultdict(list)
     cluster_to_rules: dict[str, list[int]] = defaultdict(list)
