@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from apex_lab.export import template as T
+from apex_lab.export.rule_translator import TranslatedSignal
 
 
 def _category_weight(weights: list[dict[str, Any]], category: str) -> float:
@@ -167,6 +168,7 @@ def render_pine_script(
     best_params: dict[str, Any],
     best_features: dict[str, Any],
     weights_data: dict[str, Any],
+    translated_signal: TranslatedSignal | None = None,
 ) -> str:
     """Assemble the complete Pine Script v5 strategy.
 
@@ -174,10 +176,15 @@ def render_pine_script(
         best_params: Walk-forward optimisation result (``best_parameters.json``).
         best_features: Context discovery best features (``best_features.json``).
         weights_data: Alpha scoring weights (``weights.json``).
+        translated_signal: Optional discovered signal payload for signal-pattern
+            export mode.
 
     Returns:
         A string containing the full, deployable Pine Script v5 strategy.
     """
+    if translated_signal is not None:
+        return render_signal_pattern_script(translated_signal)
+
     fast_ema: int = int(best_params.get("fast_ema", 50))
     slow_ema: int = int(best_params.get("slow_ema", 200))
     weights: list[dict[str, Any]] = weights_data.get("weights", [])
@@ -208,3 +215,61 @@ def render_pine_script(
     ]
 
     return "\n".join(sections) + "\n"
+
+
+def render_signal_pattern_script(translated_signal: TranslatedSignal) -> str:
+    """Render a Pine strategy from a discovered signal pattern."""
+    pattern = translated_signal.pattern
+    metadata = T.SIGNAL_METADATA_TEMPLATE.format(
+        rule_lines="\n// ".join(pattern.conditions),
+        signal_frequency=_display_value(pattern.signal_frequency),
+        win_rate=_format_metric(pattern.win_rate, percentage=True),
+        average_return=_format_metric(pattern.average_return, percentage=True),
+        expectancy=_format_metric(pattern.expectancy, percentage=True),
+        average_mfe=_format_metric(pattern.average_mfe, percentage=True),
+        average_mae=_format_metric(pattern.average_mae, percentage=True),
+        diversity_score=_format_metric(pattern.diversity_score),
+        composite_score=_format_metric(pattern.composite_score),
+    )
+    indicators = T.SIGNAL_BASE_INDICATORS.format(
+        indicator_lines="\n".join(translated_signal.indicator_lines) or "// (no extra indicators)"
+    )
+    entry_condition = "\n    and ".join(translated_signal.entry_conditions)
+    entry_logic = T.SIGNAL_ENTRY_LOGIC_TEMPLATE.format(
+        research_score=_format_metric(pattern.composite_score, default="0.0"),
+        entry_condition=entry_condition,
+    )
+
+    sections: list[str] = [
+        T.VERSION_HEADER,
+        "",
+        metadata,
+        "",
+        T.STRATEGY_DECLARATION,
+        "",
+        T.SIGNAL_STRATEGY_INPUTS,
+        "",
+        indicators,
+        "",
+        entry_logic,
+        "",
+        T.SIGNAL_EXIT_LOGIC,
+        "",
+        T.SIGNAL_ORDER_EXECUTION,
+        "",
+        T.SIGNAL_VISUALS,
+        "",
+        T.SIGNAL_ALERTS,
+    ]
+    return "\n".join(sections) + "\n"
+
+
+def _format_metric(value: float | None, *, percentage: bool = False, default: str = "n/a") -> str:
+    if value is None:
+        return default
+    formatted = format(value, ".6f").rstrip("0").rstrip(".")
+    return f"{formatted}%" if percentage else formatted
+
+
+def _display_value(value: int | None) -> str:
+    return "n/a" if value is None else str(value)

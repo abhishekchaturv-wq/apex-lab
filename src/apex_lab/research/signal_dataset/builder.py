@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import polars as pl
 
 from apex_lab.features import FeatureEngine
@@ -96,6 +97,7 @@ class SignalDatasetBuilder:
         ]
 
         schema_payload = build_schema_payload(dataset, feature_columns, labels, metadata)
+        quantiles_payload = _build_quantiles_payload(dataset, feature_columns)
         summary_payload = _build_summary_payload(
             dataset,
             feature_columns=feature_columns,
@@ -112,6 +114,7 @@ class SignalDatasetBuilder:
             schema_payload=schema_payload,
             summary_payload=summary_payload,
             feature_columns=feature_columns,
+            quantiles_payload=quantiles_payload,
         )
 
         return SignalDatasetBuildResult(
@@ -220,6 +223,37 @@ def _build_summary_payload(
         "duplicate_timestamps": duplicate_timestamps,
         "generation_timestamp": generation_timestamp or datetime.now(UTC).isoformat(),
     }
+
+
+def _build_quantiles_payload(
+    dataset: pl.DataFrame,
+    feature_columns: list[str],
+    bins: int = 4,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "_meta": {
+            "bins": bins,
+            "label_scheme": "zero_based",
+        }
+    }
+    quantile_levels = np.linspace(0.0, 1.0, bins + 1)
+
+    for column in feature_columns:
+        series = dataset.get_column(column)
+        if not series.dtype.is_numeric():
+            continue
+        values = np.asarray(series.to_list(), dtype=np.float64)
+        finite = values[np.isfinite(values)]
+        if finite.size == 0:
+            continue
+        edges = np.quantile(finite, quantile_levels)
+        if len(edges) < 2:
+            continue
+        payload[column] = {
+            f"q{index}": [round(float(edges[index]), 6), round(float(edges[index + 1]), 6)]
+            for index in range(len(edges) - 1)
+        }
+    return payload
 
 
 def _count_duplicate_timestamps(df: pl.DataFrame) -> int:
