@@ -12,6 +12,8 @@ from typing import Any
 from apex_lab.export import template as T
 from apex_lab.export.rule_translator import TranslatedSignal
 
+_METRIC_PRECISION = 6
+
 
 def _category_weight(weights: list[dict[str, Any]], category: str) -> float:
     """Return the summed weight for a given alpha *category*.
@@ -165,9 +167,9 @@ def render_alpha_score(weights: list[dict[str, Any]]) -> str:
 
 
 def render_pine_script(
-    best_params: dict[str, Any],
-    best_features: dict[str, Any],
-    weights_data: dict[str, Any],
+    best_params: dict[str, Any] | None = None,
+    best_features: dict[str, Any] | None = None,
+    weights_data: dict[str, Any] | None = None,
     translated_signal: TranslatedSignal | None = None,
 ) -> str:
     """Assemble the complete Pine Script v5 strategy.
@@ -185,9 +187,9 @@ def render_pine_script(
     if translated_signal is not None:
         return render_signal_pattern_script(translated_signal)
 
-    fast_ema: int = int(best_params.get("fast_ema", 50))
-    slow_ema: int = int(best_params.get("slow_ema", 200))
-    weights: list[dict[str, Any]] = weights_data.get("weights", [])
+    fast_ema: int = int((best_params or {}).get("fast_ema", 50))
+    slow_ema: int = int((best_params or {}).get("slow_ema", 200))
+    weights: list[dict[str, Any]] = (weights_data or {}).get("weights", [])
 
     sections: list[str] = [
         T.VERSION_HEADER,
@@ -267,7 +269,9 @@ def render_signal_pattern_script(translated_signal: TranslatedSignal) -> str:
 def _format_metric(value: float | None, *, percentage: bool = False, default: str = "n/a") -> str:
     if value is None:
         return default
-    formatted = format(value, ".6f").rstrip("0")
+    # Use a fixed precision for deterministic metadata while still trimming
+    # redundant trailing zeroes for readability.
+    formatted = format(value, f".{_METRIC_PRECISION}f").rstrip("0")
     if formatted.endswith("."):
         formatted = f"{formatted}0"
     return f"{formatted}%" if percentage else formatted

@@ -5,10 +5,12 @@ from __future__ import annotations
 import ast
 import csv
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+_CONDITION_RE = re.compile(r"^\s*(?P<feature>[A-Za-z0-9_]+)\s*(==|!=|>=|<=|>|<)\s*.+$")
 
 @dataclass(frozen=True)
 class SignalPattern:
@@ -87,9 +89,10 @@ def _dedupe(items: list[str]) -> tuple[str, ...]:
 def _derive_features(conditions: tuple[str, ...]) -> tuple[str, ...]:
     features: list[str] = []
     for condition in conditions:
-        feature = condition.split(" ", 1)[0].strip()
-        if feature:
-            features.append(feature)
+        match = _CONDITION_RE.fullmatch(condition)
+        if match is None:
+            raise ValueError(f"Invalid rule condition: '{condition}'")
+        features.append(match.group("feature"))
     return _dedupe(features)
 
 

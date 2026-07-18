@@ -132,12 +132,7 @@ class PineGenerator:
         """
         if self.signal_patterns_path is not None or self.quantiles_path is not None:
             translated_signal, _ = self._load_signal_inputs()
-            pine_script = render_pine_script(
-                best_params={},
-                best_features={},
-                weights_data={},
-                translated_signal=translated_signal,
-            )
+            pine_script = render_pine_script(translated_signal=translated_signal)
             summary = build_summary(
                 best_params={},
                 best_features={},

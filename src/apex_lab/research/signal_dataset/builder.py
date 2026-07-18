@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,6 +31,7 @@ from apex_lab.research.signal_dataset.labels import (
 from apex_lab.research.signal_dataset.schema import build_schema_payload
 from apex_lab.research.signal_dataset.writer import DEFAULT_OUTPUT_DIR, write_dataset_artifacts
 
+logger = logging.getLogger(__name__)
 _QUANTILE_PRECISION = 6
 
 
@@ -248,6 +250,7 @@ def _build_quantiles_payload(
         finite = values[np.isfinite(values)]
         # Guard the quantile calculation below; np.quantile([]) would raise.
         if finite.size == 0:
+            logger.warning("Skipping quantile export for feature '%s': no finite values available", column)
             continue
         edges = np.quantile(finite, quantile_levels)
         if len(edges) < 2:

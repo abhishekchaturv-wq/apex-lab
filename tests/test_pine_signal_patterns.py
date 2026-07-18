@@ -146,6 +146,8 @@ def test_generate_pine_strategy_from_signal_patterns(tmp_path: Path) -> None:
     assert 'title="Stop Loss %"' in pine_script
     assert 'title="Maximum Holding Bars"' in pine_script
     assert "label.new(bar_index, low" in pine_script
+    assert "if showLabels and longCondition" in pine_script
+    assert 'text="Rule\\nScore: "' in pine_script
     assert "(rsiVal >= 45 and rsiVal < 60)" in pine_script
     assert summary["signal_pattern"]["rule_label"] == "swing_high == q1 AND rsi == q2 AND ema_9 == q1 AND macd == q3"
 

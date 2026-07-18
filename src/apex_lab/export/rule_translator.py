@@ -19,6 +19,7 @@ _ATR_PERIOD = 14
 _MACD_FAST = 12
 _MACD_SLOW = 26
 _MACD_SIGNAL = 9
+_FLOAT_COMPARISON_EPSILON = 1e-10
 
 
 @dataclass(frozen=True)
@@ -247,7 +248,8 @@ def _range_expression(
     lower_str = _format_number(lower)
     upper_str = _format_number(upper)
     if lower == upper:
-        return f"{expression} == {lower_str}"
+        epsilon = _format_number(_FLOAT_COMPARISON_EPSILON)
+        return f"math.abs({expression} - {lower_str}) <= {epsilon}"
 
     parts: list[str] = [f"{expression} >= {lower_str}"]
     # Keep intermediate buckets half-open to avoid overlap; only the final
@@ -265,7 +267,7 @@ def _default_translators() -> list[BaseFeatureTranslator]:
         DynamicEMATranslator(),
         ExactFeatureTranslator(("rsi",), "rsiVal", (f"rsiVal = ta.rsi(close, {_RSI_PERIOD})",)),
         ExactFeatureTranslator(
-            ("macd",),
+            ("macd", "macd_line"),
             "macdLine",
             (
                 f"[macdLine, signalLine, macdHist] = ta.macd(close, {_MACD_FAST}, {_MACD_SLOW}, {_MACD_SIGNAL})",
