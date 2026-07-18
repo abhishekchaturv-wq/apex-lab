@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from apex_lab.export.renderer import render_pine_script
-from apex_lab.export.rule_translator import RuleTranslator
+from apex_lab.export.rule_translator import RuleTranslator, TranslatedSignal
 from apex_lab.export.serializer import build_summary
 from apex_lab.export.signal_pattern_loader import SignalPatternLoader
 
@@ -107,7 +107,7 @@ class PineGenerator:
         weights_data: dict[str, Any] = _load_json(self.alpha_weights_path)
         return best_params, best_features, weights_data
 
-    def _load_signal_inputs(self) -> tuple[Any, dict[str, dict[str, list[float]]]]:
+    def _load_signal_inputs(self) -> tuple[TranslatedSignal, dict[str, dict[str, list[float]]]]:
         """Load discovered signal pattern inputs for signal export mode."""
         if self.signal_patterns_path is None:
             raise RuntimeError("signal_patterns_path is required for signal-pattern Pine export")

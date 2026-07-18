@@ -103,7 +103,7 @@ class DynamicEMATranslator(BaseFeatureTranslator):
 
     def indicator_lines(self, feature: str) -> tuple[str, ...]:
         period = feature.split("_", 1)[1]
-        return (f"ema{period}Val        = ta.ema(close, {int(period)})",)
+        return (f"ema{period}Val = ta.ema(close, {int(period)})",)
 
     def pine_expression(self, feature: str) -> str:
         period = feature.split("_", 1)[1]
@@ -261,7 +261,7 @@ def _range_expression(
 def _default_translators() -> list[BaseFeatureTranslator]:
     return [
         DynamicEMATranslator(),
-        ExactFeatureTranslator(("rsi",), "rsiVal", (f"rsiVal          = ta.rsi(close, {_RSI_PERIOD})",)),
+        ExactFeatureTranslator(("rsi",), "rsiVal", (f"rsiVal = ta.rsi(close, {_RSI_PERIOD})",)),
         ExactFeatureTranslator(
             ("macd",),
             "macdLine",
@@ -283,26 +283,26 @@ def _default_translators() -> list[BaseFeatureTranslator]:
                 f"[macdLine, signalLine, macdHist] = ta.macd(close, {_MACD_FAST}, {_MACD_SLOW}, {_MACD_SIGNAL})",
             ),
         ),
-        ExactFeatureTranslator(("atr_14",), "atrVal", (f"atrVal          = ta.atr({_ATR_PERIOD})",)),
+        ExactFeatureTranslator(("atr_14",), "atrVal", (f"atrVal = ta.atr({_ATR_PERIOD})",)),
         ExactFeatureTranslator(
             ("atr_norm",),
             "atrNormVal",
             (
-                f"atrVal          = ta.atr({_ATR_PERIOD})",
-                "atrNormVal      = atrVal / close * 100.0",
+                f"atrVal = ta.atr({_ATR_PERIOD})",
+                "atrNormVal = atrVal / close * 100.0",
             ),
         ),
-        ExactFeatureTranslator(("vwap",), "vwapVal", ("vwapVal         = ta.vwap(hlc3)",)),
+        ExactFeatureTranslator(("vwap",), "vwapVal", ("vwapVal = ta.vwap(hlc3)",)),
         ExactFeatureTranslator(
             ("vwap_dist",),
             "vwapDistVal",
             (
-                "vwapVal         = ta.vwap(hlc3)",
-                "vwapDistVal     = (close - vwapVal) / vwapVal * 100.0",
+                "vwapVal = ta.vwap(hlc3)",
+                "vwapDistVal = (close - vwapVal) / vwapVal * 100.0",
             ),
         ),
-        ExactFeatureTranslator(("swing_high",), "swingHighVal", ("swingHighVal    = ta.highest(high, 10)",)),
-        ExactFeatureTranslator(("swing_low",), "swingLowVal", ("swingLowVal     = ta.lowest(low, 10)",)),
+        ExactFeatureTranslator(("swing_high",), "swingHighVal", ("swingHighVal = ta.highest(high, 10)",)),
+        ExactFeatureTranslator(("swing_low",), "swingLowVal", ("swingLowVal = ta.lowest(low, 10)",)),
         ExactFeatureTranslator(
             ("volume",),
             "volume",
@@ -310,56 +310,56 @@ def _default_translators() -> list[BaseFeatureTranslator]:
         ExactFeatureTranslator(
             ("avg_volume",),
             "avgVolumeVal",
-            ("avgVolumeVal    = ta.sma(volume, 20)",),
+            ("avgVolumeVal = ta.sma(volume, 20)",),
         ),
         ExactFeatureTranslator(
             ("rel_volume",),
             "relVolumeVal",
             (
-                "avgVolumeVal    = ta.sma(volume, 20)",
-                "relVolumeVal    = volume / avgVolumeVal",
+                "avgVolumeVal = ta.sma(volume, 20)",
+                "relVolumeVal = volume / avgVolumeVal",
             ),
         ),
-        ExactFeatureTranslator(("roc",), "rocVal", ("rocVal          = ta.roc(close, 10)",)),
+        ExactFeatureTranslator(("roc",), "rocVal", ("rocVal = ta.roc(close, 10)",)),
         ExactFeatureTranslator(
             ("bb_width",),
             "bbWidthVal",
             (
-                "bbBasis         = ta.sma(close, 20)",
-                "bbDev           = ta.stdev(close, 20) * 2.0",
-                "bbWidthVal      = (bbBasis + bbDev - (bbBasis - bbDev)) / bbBasis * 100.0",
+                "bbBasis = ta.sma(close, 20)",
+                "bbDev = ta.stdev(close, 20) * 2.0",
+                "bbWidthVal = (bbBasis + bbDev - (bbBasis - bbDev)) / bbBasis * 100.0",
             ),
         ),
         ExactFeatureTranslator(
             ("higher_high",),
             "higherHighVal",
             (
-                "swingHighVal    = ta.highest(high, 10)",
-                "higherHighVal   = swingHighVal > swingHighVal[1] ? 1.0 : 0.0",
+                "swingHighVal = ta.highest(high, 10)",
+                "higherHighVal = swingHighVal > swingHighVal[1] ? 1.0 : 0.0",
             ),
         ),
         ExactFeatureTranslator(
             ("higher_low",),
             "higherLowVal",
             (
-                "swingLowVal     = ta.lowest(low, 10)",
-                "higherLowVal    = swingLowVal > swingLowVal[1] ? 1.0 : 0.0",
+                "swingLowVal = ta.lowest(low, 10)",
+                "higherLowVal = swingLowVal > swingLowVal[1] ? 1.0 : 0.0",
             ),
         ),
         ExactFeatureTranslator(
             ("lower_high",),
             "lowerHighVal",
             (
-                "swingHighVal    = ta.highest(high, 10)",
-                "lowerHighVal    = swingHighVal < swingHighVal[1] ? 1.0 : 0.0",
+                "swingHighVal = ta.highest(high, 10)",
+                "lowerHighVal = swingHighVal < swingHighVal[1] ? 1.0 : 0.0",
             ),
         ),
         ExactFeatureTranslator(
             ("lower_low",),
             "lowerLowVal",
             (
-                "swingLowVal     = ta.lowest(low, 10)",
-                "lowerLowVal     = swingLowVal < swingLowVal[1] ? 1.0 : 0.0",
+                "swingLowVal = ta.lowest(low, 10)",
+                "lowerLowVal = swingLowVal < swingLowVal[1] ? 1.0 : 0.0",
             ),
         ),
     ]

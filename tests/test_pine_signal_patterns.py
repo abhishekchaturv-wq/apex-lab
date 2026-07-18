@@ -118,14 +118,14 @@ def test_rule_translator_decodes_quantile_conditions(tmp_path: Path) -> None:
 
     assert "(swingHighVal >= 100 and swingHighVal < 110)" in translated.entry_conditions
     assert "(rsiVal >= 45 and rsiVal < 60)" in translated.entry_conditions
-    assert "ema9Val        = ta.ema(close, 9)" in translated.indicator_lines
+    assert "ema9Val = ta.ema(close, 9)" in translated.indicator_lines
     assert "[macdLine, signalLine, macdHist] = ta.macd(close, 12, 26, 9)" in translated.indicator_lines
 
 
 def test_feature_translator_registry_resolves_dynamic_ema() -> None:
     translator = FeatureTranslatorRegistry().resolve("ema_9")
     assert translator.pine_expression("ema_9") == "ema9Val"
-    assert translator.indicator_lines("ema_9") == ("ema9Val        = ta.ema(close, 9)",)
+    assert translator.indicator_lines("ema_9") == ("ema9Val = ta.ema(close, 9)",)
 
 
 def test_generate_pine_strategy_from_signal_patterns(tmp_path: Path) -> None:
@@ -204,6 +204,8 @@ def test_unsupported_feature_raises_descriptive_error(tmp_path: Path) -> None:
                     "rule_label": "adx == q1",
                     "conditions": ["adx == q1"],
                     "features": ["adx"],
+                    "combination_size": 1,
+                    "signal_frequency": 10,
                 }
             ]
         ),
@@ -238,7 +240,17 @@ def test_invalid_rule_raises_descriptive_error(tmp_path: Path) -> None:
     signal_patterns_path = tmp_path / "top_signals.json"
     quantiles_path = tmp_path / "quantiles.json"
     signal_patterns_path.write_text(
-        json.dumps([{"rule_label": "invalid rule", "conditions": ["invalid rule"]}]),
+        json.dumps(
+            [
+                {
+                    "rule_label": "invalid rule",
+                    "conditions": ["invalid rule"],
+                    "features": ["rsi"],
+                    "combination_size": 1,
+                    "signal_frequency": 10,
+                }
+            ]
+        ),
         encoding="utf-8",
     )
     quantiles_path.write_text(json.dumps({"rsi": {"q1": [10.0, 20.0]}}), encoding="utf-8")
