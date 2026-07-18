@@ -244,7 +244,7 @@ def _build_quantiles_payload(
         series = dataset.get_column(column)
         if not series.dtype.is_numeric():
             continue
-        values = np.asarray(series.to_list(), dtype=np.float64)
+        values = np.asarray(series.to_numpy(), dtype=np.float64)
         finite = values[np.isfinite(values)]
         if finite.size == 0:
             continue

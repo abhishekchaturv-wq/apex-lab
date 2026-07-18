@@ -14,6 +14,11 @@ _CONDITION_RE = re.compile(
     r"^\s*(?P<feature>[A-Za-z0-9_]+)\s*(?P<operator>==|!=|>=|<=|>|<)\s*(?P<value>.+?)\s*$"
 )
 _QUANTILE_RE = re.compile(r"^q(?P<index>\d+)$")
+_RSI_PERIOD = 14
+_ATR_PERIOD = 14
+_MACD_FAST = 12
+_MACD_SLOW = 26
+_MACD_SIGNAL = 9
 
 
 @dataclass(frozen=True)
@@ -67,7 +72,7 @@ class BaseFeatureTranslator(ABC):
         expression = self.pine_expression(condition.feature)
         if quantile_match is not None:
             bounds = _resolve_quantile_bounds(condition.feature, condition.value, quantiles)
-            return _range_expression(expression, bounds, label=condition.value)
+            return _range_expression(expression, bounds)
 
         return f'{expression} == "{condition.value}"'
 
@@ -202,7 +207,7 @@ def _resolve_quantile_bounds(
     feature: str,
     bucket: str,
     quantiles: dict[str, dict[str, list[float]]],
-) -> tuple[float, float, bool, bool]:
+) -> tuple[float, float, bool]:
     feature_buckets = quantiles.get(feature)
     if not feature_buckets:
         raise ValueError(
@@ -225,10 +230,9 @@ def _resolve_quantile_bounds(
         key=lambda item: item[0],
     )
     if not ordered:
-        return lower, upper, True, True
-    first = ordered[0][1]
+        return lower, upper, True
     last = ordered[-1][1]
-    return lower, upper, bucket == first, bucket == last
+    return lower, upper, bucket == last
 
 
 def _format_number(value: float) -> str:
@@ -237,11 +241,9 @@ def _format_number(value: float) -> str:
 
 def _range_expression(
     expression: str,
-    bounds: tuple[float, float, bool, bool],
-    *,
-    label: str,
+    bounds: tuple[float, float, bool],
 ) -> str:
-    lower, upper, _is_first, is_last = bounds
+    lower, upper, is_last = bounds
     lower_str = _format_number(lower)
     upper_str = _format_number(upper)
     if lower == upper:
@@ -259,28 +261,34 @@ def _range_expression(
 def _default_translators() -> list[BaseFeatureTranslator]:
     return [
         DynamicEMATranslator(),
-        ExactFeatureTranslator(("rsi",), "rsiVal", ("rsiVal          = ta.rsi(close, 14)",)),
+        ExactFeatureTranslator(("rsi",), "rsiVal", (f"rsiVal          = ta.rsi(close, {_RSI_PERIOD})",)),
         ExactFeatureTranslator(
             ("macd",),
             "macdLine",
-            ("[macdLine, signalLine, macdHist] = ta.macd(close, 12, 26, 9)",),
+            (
+                f"[macdLine, signalLine, macdHist] = ta.macd(close, {_MACD_FAST}, {_MACD_SLOW}, {_MACD_SIGNAL})",
+            ),
         ),
         ExactFeatureTranslator(
             ("macd_signal",),
             "signalLine",
-            ("[macdLine, signalLine, macdHist] = ta.macd(close, 12, 26, 9)",),
+            (
+                f"[macdLine, signalLine, macdHist] = ta.macd(close, {_MACD_FAST}, {_MACD_SLOW}, {_MACD_SIGNAL})",
+            ),
         ),
         ExactFeatureTranslator(
             ("macd_hist",),
             "macdHist",
-            ("[macdLine, signalLine, macdHist] = ta.macd(close, 12, 26, 9)",),
+            (
+                f"[macdLine, signalLine, macdHist] = ta.macd(close, {_MACD_FAST}, {_MACD_SLOW}, {_MACD_SIGNAL})",
+            ),
         ),
-        ExactFeatureTranslator(("atr_14",), "atrVal", ("atrVal          = ta.atr(14)",)),
+        ExactFeatureTranslator(("atr_14",), "atrVal", (f"atrVal          = ta.atr({_ATR_PERIOD})",)),
         ExactFeatureTranslator(
             ("atr_norm",),
             "atrNormVal",
             (
-                "atrVal          = ta.atr(14)",
+                f"atrVal          = ta.atr({_ATR_PERIOD})",
                 "atrNormVal      = atrVal / close * 100.0",
             ),
         ),

@@ -103,7 +103,8 @@ def _normalize_record(record: dict[str, Any]) -> SignalPattern:
     if not rule_label:
         raise ValueError("signal pattern record is missing rule_label/conditions")
 
-    features = _dedupe(_as_list(record.get("features"))) or _derive_features(conditions)
+    raw_features = record.get("features")
+    features = _dedupe(_as_list(raw_features)) if raw_features else _derive_features(conditions)
     if not conditions:
         raise ValueError(f"signal pattern '{rule_label}' does not contain any conditions")
 
