@@ -17,6 +17,7 @@ def write_dataset_artifacts(
     schema_payload: dict[str, Any],
     summary_payload: dict[str, Any],
     feature_columns: list[str],
+    quantiles_payload: dict[str, Any],
 ) -> dict[str, Path]:
     """Write parquet + JSON artifact set and return file paths."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -25,15 +26,18 @@ def write_dataset_artifacts(
     schema_path = output_dir / "schema.json"
     summary_path = output_dir / "summary.json"
     feature_list_path = output_dir / "feature_list.json"
+    quantiles_path = output_dir / "quantiles.json"
 
     df.write_parquet(dataset_path)
     schema_path.write_text(json.dumps(schema_payload, indent=2), encoding="utf-8")
     summary_path.write_text(json.dumps(summary_payload, indent=2), encoding="utf-8")
     feature_list_path.write_text(json.dumps(feature_columns, indent=2), encoding="utf-8")
+    quantiles_path.write_text(json.dumps(quantiles_payload, indent=2), encoding="utf-8")
 
     return {
         "dataset": dataset_path,
         "schema": schema_path,
         "summary": summary_path,
         "feature_list": feature_list_path,
+        "quantiles": quantiles_path,
     }

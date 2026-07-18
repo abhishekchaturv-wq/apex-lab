@@ -22,7 +22,9 @@ from pathlib import Path
 from typing import Any
 
 from apex_lab.export.renderer import render_pine_script
+from apex_lab.export.rule_translator import RuleTranslator, TranslatedSignal
 from apex_lab.export.serializer import build_summary
+from apex_lab.export.signal_pattern_loader import SignalPatternLoader
 
 # ---------------------------------------------------------------------------
 # Default paths
@@ -35,6 +37,8 @@ DEFAULT_ALPHA_WEIGHTS = Path("reports/lab/alpha/weights.json")
 DEFAULT_OUTPUT_DIR = Path("generated")
 DEFAULT_PINE_OUTPUT = DEFAULT_OUTPUT_DIR / "strategy.pine"
 DEFAULT_SUMMARY_OUTPUT = DEFAULT_OUTPUT_DIR / "strategy_summary.json"
+DEFAULT_SIGNAL_PATTERNS = Path("reports/lab/signal_patterns/top_signals.json")
+DEFAULT_QUANTILES = Path("reports/lab/signal_dataset/quantiles.json")
 
 
 def _load_json(path: Path) -> Any:
@@ -77,11 +81,17 @@ class PineGenerator:
         context_features_path: Path = DEFAULT_CONTEXT_FEATURES,
         alpha_weights_path: Path = DEFAULT_ALPHA_WEIGHTS,
         output_dir: Path = DEFAULT_OUTPUT_DIR,
+        signal_patterns_path: Path | None = None,
+        quantiles_path: Path | None = None,
     ) -> None:
         self.walkforward_params_path = walkforward_params_path
         self.context_features_path = context_features_path
         self.alpha_weights_path = alpha_weights_path
         self.output_dir = output_dir
+        self.signal_patterns_path = signal_patterns_path
+        self.quantiles_path = quantiles_path
+        self.signal_pattern_loader = SignalPatternLoader()
+        self.rule_translator = RuleTranslator()
 
     def _load_inputs(self) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
         """Load and validate all three required input files.
@@ -97,6 +107,17 @@ class PineGenerator:
         weights_data: dict[str, Any] = _load_json(self.alpha_weights_path)
         return best_params, best_features, weights_data
 
+    def _load_signal_inputs(self) -> tuple[TranslatedSignal, dict[str, dict[str, list[float]]]]:
+        """Load discovered signal pattern inputs for signal export mode."""
+        if self.signal_patterns_path is None:
+            raise RuntimeError("signal_patterns_path is required for signal-pattern Pine export")
+        if self.quantiles_path is None:
+            raise RuntimeError("quantiles_path is required for signal-pattern Pine export")
+        pattern = self.signal_pattern_loader.load_top_signal(self.signal_patterns_path)
+        quantiles = self.rule_translator.load_quantiles(self.quantiles_path)
+        translated = self.rule_translator.translate(pattern, quantiles)
+        return translated, quantiles
+
     def generate(self) -> tuple[Path, Path]:
         """Run the full generation pipeline.
 
@@ -109,19 +130,33 @@ class PineGenerator:
         Raises:
             RuntimeError: If any required input file is missing.
         """
-        best_params, best_features, weights_data = self._load_inputs()
+        if self.signal_patterns_path is not None or self.quantiles_path is not None:
+            translated_signal, _ = self._load_signal_inputs()
+            pine_script = render_pine_script(translated_signal=translated_signal)
+            summary = build_summary(
+                best_params={},
+                best_features={},
+                weights_data={},
+                input_files=[
+                    str(self.signal_patterns_path),
+                    str(self.quantiles_path),
+                ],
+                signal_pattern=translated_signal.pattern,
+            )
+        else:
+            best_params, best_features, weights_data = self._load_inputs()
 
-        pine_script = render_pine_script(best_params, best_features, weights_data)
-        summary = build_summary(
-            best_params=best_params,
-            best_features=best_features,
-            weights_data=weights_data,
-            input_files=[
-                str(self.walkforward_params_path),
-                str(self.context_features_path),
-                str(self.alpha_weights_path),
-            ],
-        )
+            pine_script = render_pine_script(best_params, best_features, weights_data)
+            summary = build_summary(
+                best_params=best_params,
+                best_features=best_features,
+                weights_data=weights_data,
+                input_files=[
+                    str(self.walkforward_params_path),
+                    str(self.context_features_path),
+                    str(self.alpha_weights_path),
+                ],
+            )
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -139,6 +174,8 @@ def generate_pine_strategy(
     context_features_path: Path = DEFAULT_CONTEXT_FEATURES,
     alpha_weights_path: Path = DEFAULT_ALPHA_WEIGHTS,
     output_dir: Path = DEFAULT_OUTPUT_DIR,
+    signal_patterns_path: Path | None = None,
+    quantiles_path: Path | None = None,
 ) -> tuple[Path, Path]:
     """Convenience function: generate the Pine Script strategy.
 
@@ -147,6 +184,8 @@ def generate_pine_strategy(
         context_features_path: Path to ``best_features.json``.
         alpha_weights_path: Path to ``weights.json``.
         output_dir: Directory for generated output files.
+        signal_patterns_path: Optional path to ``top_signals.json``.
+        quantiles_path: Optional path to ``quantiles.json``.
 
     Returns:
         A two-tuple of (pine_output_path, summary_output_path).
@@ -159,5 +198,7 @@ def generate_pine_strategy(
         context_features_path=context_features_path,
         alpha_weights_path=alpha_weights_path,
         output_dir=output_dir,
+        signal_patterns_path=signal_patterns_path,
+        quantiles_path=quantiles_path,
     )
     return generator.generate()

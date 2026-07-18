@@ -15,8 +15,13 @@ import polars as pl
 from apex_lab.export.pine_generator import (
     DEFAULT_ALPHA_WEIGHTS,
     DEFAULT_CONTEXT_FEATURES,
+    DEFAULT_QUANTILES,
+    DEFAULT_SIGNAL_PATTERNS,
     DEFAULT_WALKFORWARD_PARAMS,
     generate_pine_strategy,
+)
+from apex_lab.export.pine_generator import (
+    DEFAULT_OUTPUT_DIR as DEFAULT_PINE_OUTPUT_DIR,
 )
 from apex_lab.research.alpha.engine import (
     DEFAULT_OUTPUT_DIR as DEFAULT_ALPHA_OUTPUT_DIR,
@@ -243,6 +248,24 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("generated"),
         help="Directory for Pine Script generator output files (default: generated).",
+    )
+    parser.add_argument(
+        "--signal-patterns",
+        type=Path,
+        default=None,
+        help="Optional path to top_signals.json/top_signals.csv for signal-pattern Pine export.",
+    )
+    parser.add_argument(
+        "--quantiles",
+        type=Path,
+        default=None,
+        help="Optional path to signal dataset quantiles.json for signal-pattern Pine export.",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional output directory alias for Pine export mode.",
     )
     parser.add_argument(
         "--pine-walkforward-params",
@@ -736,17 +759,57 @@ def run_signal_patterns(
     return result.summary
 
 
+def run_pine_export(
+    output_dir: Path = DEFAULT_PINE_OUTPUT_DIR,
+    walkforward_params_path: Path = DEFAULT_WALKFORWARD_PARAMS,
+    context_features_path: Path = DEFAULT_CONTEXT_FEATURES,
+    alpha_weights_path: Path = DEFAULT_ALPHA_WEIGHTS,
+    signal_patterns_path: Path | None = None,
+    quantiles_path: Path | None = None,
+) -> tuple[Path, Path]:
+    """Run the Pine export pipeline in legacy or signal-pattern mode."""
+    return generate_pine_strategy(
+        walkforward_params_path=walkforward_params_path,
+        context_features_path=context_features_path,
+        alpha_weights_path=alpha_weights_path,
+        output_dir=output_dir,
+        signal_patterns_path=signal_patterns_path,
+        quantiles_path=quantiles_path,
+    )
+
+
 def main() -> None:
     """Execute the research lab CLI."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     args = parse_args()
 
     if args.mode == "pine":
-        pine_path, summary_path = generate_pine_strategy(
+        signal_patterns_path = args.signal_patterns
+        quantiles_path = args.quantiles
+        if signal_patterns_path is not None and quantiles_path is None:
+            quantiles_path = DEFAULT_QUANTILES
+            logger.info("Using default quantiles path for Pine export: %s", quantiles_path)
+        if quantiles_path is not None and signal_patterns_path is None:
+            signal_patterns_path = DEFAULT_SIGNAL_PATTERNS
+            logger.info("Using default signal-pattern path for Pine export: %s", signal_patterns_path)
+        if signal_patterns_path == DEFAULT_SIGNAL_PATTERNS and not signal_patterns_path.exists():
+            raise SystemExit(
+                f"Default signal pattern file does not exist: {signal_patterns_path}. "
+                "Pass --signal-patterns explicitly or run --mode signal_patterns first."
+            )
+        if quantiles_path == DEFAULT_QUANTILES and not quantiles_path.exists():
+            raise SystemExit(
+                f"Default quantiles file does not exist: {quantiles_path}. "
+                "Pass --quantiles explicitly or run --mode signal_dataset first."
+            )
+        pine_output_dir = args.output or args.pine_output_dir
+        pine_path, summary_path = run_pine_export(
             walkforward_params_path=args.pine_walkforward_params,
             context_features_path=args.pine_context_features,
             alpha_weights_path=args.pine_alpha_weights,
-            output_dir=args.pine_output_dir,
+            output_dir=pine_output_dir,
+            signal_patterns_path=signal_patterns_path,
+            quantiles_path=quantiles_path,
         )
         logger.info("Pine Script generated: %s", pine_path)
         logger.info("Strategy summary written: %s", summary_path)
