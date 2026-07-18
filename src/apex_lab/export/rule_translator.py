@@ -7,7 +7,6 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from apex_lab.export.signal_pattern_loader import SignalPattern
 

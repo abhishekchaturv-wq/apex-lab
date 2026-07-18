@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import importlib.util
+import json
 import math
 from pathlib import Path
 from types import ModuleType
@@ -89,6 +90,7 @@ def test_signal_dataset_builder_generates_required_artifacts(tmp_path: Path) -> 
     assert (tmp_path / "schema.json").exists()
     assert (tmp_path / "summary.json").exists()
     assert (tmp_path / "feature_list.json").exists()
+    assert (tmp_path / "quantiles.json").exists()
 
     assert "symbol" in result.dataset.columns
     assert "interval" in result.dataset.columns
@@ -96,6 +98,9 @@ def test_signal_dataset_builder_generates_required_artifacts(tmp_path: Path) -> 
     assert "weekday" in result.dataset.columns
     assert "market_regime" in result.dataset.columns
     assert "alpha_score" in result.dataset.columns
+
+    quantiles = json.loads((tmp_path / "quantiles.json").read_text(encoding="utf-8"))
+    assert "ema_9" in quantiles
 
 
 def test_summary_and_schema_payload_fields(tmp_path: Path) -> None:

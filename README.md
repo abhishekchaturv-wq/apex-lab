@@ -63,9 +63,59 @@ python scripts/research_lab.py \
     --dataset reports/lab/signal_dataset/dataset.parquet \
     --feature-ranking reports/lab/signal_discovery/feature_importance.csv
 
-# Pine Script generator
+# Pine Script generator (legacy research export)
 python scripts/research_lab.py --mode pine
+
+# Pine Script generator (discovered signal export)
+python scripts/research_lab.py \
+    --mode pine \
+    --signal-patterns reports/lab/signal_patterns/top_signals.json \
+    --quantiles reports/lab/signal_dataset/quantiles.json \
+    --output generated
 ```
+
+### Signal Pattern → Pine Workflow
+
+The Pine export subsystem now supports direct strategy generation from discovered
+signal patterns without any manual rule translation:
+
+```text
+signal_dataset
+      ↓
+signal_discovery
+      ↓
+signal_patterns
+      ↓
+top_signals.json
+      ↓
+Pine Export
+      ↓
+TradingView Strategy
+```
+
+Signal pattern Pine export consumes:
+
+- `reports/lab/signal_patterns/top_signals.json`
+- `reports/lab/signal_dataset/quantiles.json`
+
+The generated TradingView strategy includes:
+
+- `strategy()` output (not indicator-only)
+- long entries with optional short support
+- configurable stop loss / take profit / ATR stop / trailing stop / risk-reward
+- maximum holding bars
+- alerts, labels, arrows, background colouring, and signal-score plotting
+
+### Pine CLI Options
+
+`python scripts/research_lab.py --mode pine` continues to use the legacy
+walk-forward/context/alpha export inputs by default.
+
+Optional signal-pattern export arguments:
+
+- `--signal-patterns`: path to `top_signals.json` or `top_signals.csv`
+- `--quantiles`: path to `quantiles.json`
+- `--output`: output directory alias for Pine export mode
 
 ### Strategy Research Framework
 
