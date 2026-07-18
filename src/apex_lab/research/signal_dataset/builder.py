@@ -246,6 +246,7 @@ def _build_quantiles_payload(
             continue
         values = np.asarray(series.to_numpy(), dtype=np.float64)
         finite = values[np.isfinite(values)]
+        # Guard the quantile calculation below; np.quantile([]) would raise.
         if finite.size == 0:
             continue
         edges = np.quantile(finite, quantile_levels)

@@ -267,7 +267,9 @@ def render_signal_pattern_script(translated_signal: TranslatedSignal) -> str:
 def _format_metric(value: float | None, *, percentage: bool = False, default: str = "n/a") -> str:
     if value is None:
         return default
-    formatted = format(value, ".6f").rstrip("0").rstrip(".")
+    formatted = format(value, ".6f").rstrip("0")
+    if formatted.endswith("."):
+        formatted = f"{formatted}0"
     return f"{formatted}%" if percentage else formatted
 
 

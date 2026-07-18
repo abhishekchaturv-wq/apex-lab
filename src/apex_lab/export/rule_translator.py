@@ -250,6 +250,8 @@ def _range_expression(
         return f"{expression} == {lower_str}"
 
     parts: list[str] = [f"{expression} >= {lower_str}"]
+    # Keep intermediate buckets half-open to avoid overlap; only the final
+    # quantile bucket includes its upper bound.
     if is_last:
         parts.append(f"{expression} <= {upper_str}")
     else:

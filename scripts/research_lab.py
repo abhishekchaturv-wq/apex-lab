@@ -788,8 +788,20 @@ def main() -> None:
         quantiles_path = args.quantiles
         if signal_patterns_path is not None and quantiles_path is None:
             quantiles_path = DEFAULT_QUANTILES
+            logger.info("Using default quantiles path for Pine export: %s", quantiles_path)
         if quantiles_path is not None and signal_patterns_path is None:
             signal_patterns_path = DEFAULT_SIGNAL_PATTERNS
+            logger.info("Using default signal-pattern path for Pine export: %s", signal_patterns_path)
+        if signal_patterns_path == DEFAULT_SIGNAL_PATTERNS and not signal_patterns_path.exists():
+            raise SystemExit(
+                f"Default signal pattern file does not exist: {signal_patterns_path}. "
+                "Pass --signal-patterns explicitly or run --mode signal_patterns first."
+            )
+        if quantiles_path == DEFAULT_QUANTILES and not quantiles_path.exists():
+            raise SystemExit(
+                f"Default quantiles file does not exist: {quantiles_path}. "
+                "Pass --quantiles explicitly or run --mode signal_dataset first."
+            )
         pine_output_dir = args.output or args.pine_output_dir
         pine_path, summary_path = run_pine_export(
             walkforward_params_path=args.pine_walkforward_params,
