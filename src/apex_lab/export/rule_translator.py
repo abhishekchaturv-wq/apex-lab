@@ -241,18 +241,13 @@ def _range_expression(
     *,
     label: str,
 ) -> str:
-    lower, upper, is_first, is_last = bounds
+    lower, upper, _is_first, is_last = bounds
     lower_str = _format_number(lower)
     upper_str = _format_number(upper)
     if lower == upper:
         return f"{expression} == {lower_str}"
 
-    parts: list[str] = []
-    if is_first:
-        parts.append(f"{expression} >= {lower_str}")
-    else:
-        parts.append(f"{expression} >= {lower_str}")
-
+    parts: list[str] = [f"{expression} >= {lower_str}"]
     if is_last:
         parts.append(f"{expression} <= {upper_str}")
     else:

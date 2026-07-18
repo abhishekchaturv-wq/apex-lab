@@ -30,6 +30,8 @@ from apex_lab.research.signal_dataset.labels import (
 from apex_lab.research.signal_dataset.schema import build_schema_payload
 from apex_lab.research.signal_dataset.writer import DEFAULT_OUTPUT_DIR, write_dataset_artifacts
 
+_QUANTILE_PRECISION = 6
+
 
 @dataclass(frozen=True)
 class SignalDatasetConfig:
@@ -250,7 +252,10 @@ def _build_quantiles_payload(
         if len(edges) < 2:
             continue
         payload[column] = {
-            f"q{index}": [round(float(edges[index]), 6), round(float(edges[index + 1]), 6)]
+            f"q{index}": [
+                round(float(edges[index]), _QUANTILE_PRECISION),
+                round(float(edges[index + 1]), _QUANTILE_PRECISION),
+            ]
             for index in range(len(edges) - 1)
         }
     return payload
